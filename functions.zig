@@ -5,15 +5,15 @@ const math = std.math;
 
 pub fn ReLU(LEN: comptime_int, F: type) type {
   return struct {
-    pub fn forward(input: *[LEN]F, output: *[LEN]F) void {
+    pub fn forward(input: *const [LEN]F, output: *[LEN]F) void {
       inline for (0..LEN) |i| {
         output[i] = if (input[i] < 0) 0 else input[i];
       }
     }
 
-    pub fn backward(derivative: *[LEN]F, cache: *[LEN]F, output: *[LEN]F) void {
+    pub fn backward(derivative: *const [LEN]F, cache: *const [LEN]F, output: *[LEN]F) void {
       inline for (0..LEN) |i| {
-        output[i] = if (cache == 0) 0 else derivative;
+        output[i] = if (cache[i] == 0) 0 else derivative[i];
       }
     }
   };
@@ -21,7 +21,7 @@ pub fn ReLU(LEN: comptime_int, F: type) type {
 
 pub fn Softmax(LEN: comptime_int, F: type) type {
   return struct {
-    pub fn forward(input: *[LEN]F, output: *[LEN]F) void {
+    pub fn forward(input: *const [LEN]F, output: *[LEN]F) void {
       var sum_exp: F = 0;
       inline for (0..LEN) |i| {
         output[i] = math.exp(input[i]);
@@ -32,7 +32,7 @@ pub fn Softmax(LEN: comptime_int, F: type) type {
       }
     }
 
-    pub fn backward(derivative: *[LEN]F, cache: *[LEN]F, output: *[LEN]F) void {
+    pub fn backward(derivative: *const [LEN]F, cache: *const [LEN]F, output: *[LEN]F) void {
       var sum_dot_derivative: F = 0;
       inline for (0..LEN) |i| {
         sum_dot_derivative += cache[i] * derivative[i];
@@ -46,13 +46,13 @@ pub fn Softmax(LEN: comptime_int, F: type) type {
 
 pub fn Tanh(LEN: comptime_int, F: type) type {
   return struct {
-    pub fn forward(input: *[LEN]F, output: *[LEN]F) void {
+    pub fn forward(input: *const [LEN]F, output: *[LEN]F) void {
       inline for (0..LEN) |i| {
         output[i] = math.tanh(input[i]);
       }
     }
 
-    pub fn backward(derivative: *[LEN]F, cache: *[LEN]F, output: *[LEN]F) void {
+    pub fn backward(derivative: *const [LEN]F, cache: *const [LEN]F, output: *[LEN]F) void {
       inline for (0..LEN) |i| {
         output[i] = derivative[i] * (1 - cache[i] * cache[i]);
       }
@@ -62,13 +62,13 @@ pub fn Tanh(LEN: comptime_int, F: type) type {
 
 pub fn Sigmoid(LEN: comptime_int, F: type) type {
   return struct {
-    pub fn forward(input: *[LEN]F, output: *[LEN]F) void {
+    pub fn forward(input: *const [LEN]F, output: *[LEN]F) void {
       inline for (0..LEN) |i| {
         output[i] = 1.0 / (1.0 + math.exp(-input[i]));
       }
     }
 
-    pub fn backward(derivative: *[LEN]F, cache: *[LEN]F, output: *[LEN]F) void {
+    pub fn backward(derivative: *const [LEN]F, cache: *const [LEN]F, output: *[LEN]F) void {
       inline for (0..LEN) |i| {
         output[i] = derivative[i] * cache[i] * (1 - cache[i]);
       }
@@ -80,12 +80,12 @@ pub fn Sigmoid(LEN: comptime_int, F: type) type {
 
 pub fn CategoricalCrossentropy(LEN: comptime_int, F: type) type {
   return struct {
-    pub fn forward(predictions: *[LEN]F, target: u32) F {
+    pub fn forward(predictions: *const [LEN]F, target: u32) F {
       std.debug.assert(target < LEN);
       return -@log(predictions[target]);
     }
 
-    pub fn backward(predictions: *[LEN]F, target: u32, output: *[LEN]F) void {
+    pub fn backward(predictions: *const [LEN]F, target: u32, output: *[LEN]F) void {
       std.debug.assert(target < LEN);
       inline for (0..LEN) |i| {
         output[i] = if (i != target) 0 else 1/predictions[i];

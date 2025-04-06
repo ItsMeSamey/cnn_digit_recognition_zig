@@ -3,6 +3,7 @@ const Layers = @import("layers.zig");
 const Functions = @import("functions.zig");
 
 pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) type {
+  @setEvalBranchQuota(1000_000);
   std.debug.assert(@TypeOf(layers) == [layers.len]Layers.LayerType);
 
   const LayerProperties = struct {
@@ -92,7 +93,7 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
         for (Trainer.Layers, 0..) |l, i| {
           fields = fields ++ &[1]std.builtin.Type.StructField{.{
             .name = std.fmt.comptimePrint("{d}", .{i}),
-            .type = if (l.need_gradient) l.backward_output else void,
+            .type = if (l.need_gradient and @typeInfo(l.backward_output) != .pointer) l.backward_output else void,
             .default_value_ptr = null,
             .is_comptime = false,
             .alignment = @alignOf(l.layer_type),
@@ -110,20 +111,20 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
       };
 
       fn reset(self: *@This()) void {
-        inline for (@This().Layers, 0..) |l, i| {
+        inline for (Trainer.Layers, 0..) |l, i| {
           if (l.need_gradient) @field(self.sub, std.fmt.comptimePrint("{d}", .{i})).reset();
         }
       }
 
       fn add(self: *@This(), other: *@This()) void {
-        inline for (@This().Layers, 0..) |l, i| {
+        inline for (Trainer.Layers, 0..) |l, i| {
           const name = std.fmt.comptimePrint("{d}", .{i});
           if (l.need_gradient) @field(self.sub, name).add(@field(other, name));
         }
       }
 
       fn div(self: *@This(), val: F) void {
-        inline for (@This().Layers, 0..) |l, i| {
+        inline for (Trainer.Layers, 0..) |l, i| {
           if (l.need_gradient) @field(self.sub, std.fmt.comptimePrint("{d}", .{i})).div(val);
         }
       }
@@ -147,8 +148,12 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
         comptime var retval: [@This().Layers.len + 1]comptime_int = undefined;
         retval[0] = height * width;
         inline for (1..@This().Layers.len+1) |i| {
-          const dims = getLayerInputDims(i);
-          retval[i] = retval[i-1] + dims[0] * dims[1];
+          if (@typeInfo(@This().Layers[i-1].backward_output) == .pointer) {
+            retval[i] = retval[i-1];
+          } else {
+            const dims = getLayerInputDims(i);
+            retval[i] = retval[i-1] + dims[0] * dims[1];
+          }
         }
         return retval;
       }
@@ -159,13 +164,14 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
       pub fn forward(self: *@This(), input: [height][width]u8, cache: *[CacheSize]F) void {
         inline for (input, 0..) |row, i| {
           inline for (row, 0..) |val, j| {
-            @as([height][width]F, @ptrCast(&cache))[i][j] = @as(F, @floatFromInt(val)) / @as(F, 255);
+            @as(*[height][width]F, @ptrCast(cache))[i][j] = @as(F, @floatFromInt(val)) / @as(F, 255);
           }
         }
 
-        inline for (0..@This().Layers) |i| {
+        inline for (@This().Layers, 0..) |l, i| {
           const name = std.fmt.comptimePrint("{d}", .{i});
-          @field(self.layers, name).forward(@ptrCast(&cache[CacheSizeArray[i]..]), @ptrCast(&cache[CacheSizeArray[i+1]..]));
+          if (@typeInfo(l.backward_output) == .pointer) continue;
+          @field(self.layers, name).forward(@ptrCast(cache[CacheSizeArray[i]..].ptr), @ptrCast(cache[CacheSizeArray[i+1]..].ptr));
         }
       }
 
@@ -178,8 +184,10 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
 
         var gradients: Gradients = undefined;
 
-        inline for (@This().Layers, 0..) |l, _i| {
-          const i = @This().Layers - 1 - _i;
+        inline for (0..@This().Layers.len) |_i| {
+          const i = @This().Layers.len - 1 - _i;
+          const l = @This().Layers[i];
+          if (@typeInfo(l.backward_output) == .pointer) continue;
           const name = std.fmt.comptimePrint("{d}", .{i});
           const grad_out = @field(self.layers, name).backward(
             @ptrCast(&cache[CacheSizeArray[i]..]),
@@ -218,7 +226,8 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
           for (1..options.batch_size) |_| {
             const next = iterator.next() orelse break;
             self.forward(next.image.*, &cache);
-            gradients.add(self.backward(&cache));
+            var grad = self.backward(&cache, next.label);
+            gradients.add(&grad);
             i += 1;
 
             const loss = CategoricalCrossentropy.forward(cache[CacheSize - OutputWidth..], next.label);
@@ -233,7 +242,8 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
 
       pub fn applyGradients(self: *@This(), gradients: *Gradients, learning_rate: F) void {
         inline for (0..@This().Layers.len) |i| {
-          const name = std.fmt.comptimePrint("{d}", i);
+          const name = std.fmt.comptimePrint("{d}", .{i});
+          if (@TypeOf(@field(gradients.sub, name)) == void) continue;
           @field(self.layers, name).applyGradient(@field(gradients.sub, name), learning_rate);
         }
       }
@@ -264,8 +274,9 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
           }
         }
 
-        inline for (0..@This().Layers) |i| {
+        inline for (@This().Layers, 0..) |l, i| {
           const name = std.fmt.comptimePrint("{d}", .{i});
+          if (@typeInfo(l.return_type) == .pointer) continue;
           @field(self.layers, name).forward(@ptrCast(p1), @ptrCast(p2));
           const temp = p1;
           p1 = p2;

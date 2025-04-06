@@ -22,6 +22,7 @@ pub const LayerOutputType = struct {
 };
 
 pub fn getConvolver(filter_x: comptime_int, filter_y: comptime_int, stride_x: comptime_int, stride_y: comptime_int) LayerType {
+  @setEvalBranchQuota(1000_000);
   std.debug.assert(filter_x >= 1);
   std.debug.assert(filter_y >= 1);
   std.debug.assert(stride_x >= 1);
@@ -219,6 +220,7 @@ fn NoOpGradient(F: type) type {
 }
 
 pub fn getMaxPooling(pool_size_x: comptime_int, pool_size_y: comptime_int, stride_x: comptime_int, stride_y: comptime_int) LayerType {
+  @setEvalBranchQuota(1000_000);
   std.debug.assert(pool_size_x >= 1);
   std.debug.assert(pool_size_y >= 1);
   std.debug.assert(stride_x >= 1);
@@ -348,6 +350,7 @@ test getMaxPooling {
 
 // A special flatten layer (had to be implemented this way to prevent copying)
 pub fn getFlattener() LayerType {
+  @setEvalBranchQuota(1000_000);
   return struct {
     pub fn getLayer(F: type, in_training: bool, height: comptime_int, width: comptime_int) LayerOutputType {
       const out_width = width * height;
@@ -380,6 +383,8 @@ test getFlattener {
 }
 
 pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, T: type) type) LayerType {
+  @setEvalBranchQuota(1000_000);
+
   return struct {
     pub fn getLayer(F: type, in_training: bool, height: comptime_int, width: comptime_int) LayerOutputType {
       std.debug.assert(height == 1);
@@ -399,6 +404,7 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
         }
 
         pub fn reset(self: *@This()) void {
+          @setEvalBranchQuota(1000_000);
           inline for (0..out_width) |i| {
             self.biases[i] = 0;
             inline for (0..width) |j| {
@@ -478,13 +484,14 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
           d_prev: *[1][width]F,
           d_next: *const [1][out_width]F,
         ) Gradient {
+          @setEvalBranchQuota(1000_000);
           if (!in_training) @compileError("Cant call " ++ @typeName(@This()) ++ ".backward() when not in_training");
 
           var gradient = Gradient.init();
           gradient.reset();
 
           var activate_backward_output: [out_width]F = undefined;
-          Activate.backward((&d_next[0]).ptr, (&cache_out[0]).ptr, (&activate_backward_output).ptr);
+          Activate.backward(&d_next[0], &cache_out[0], &activate_backward_output);
 
           // Gradient with respect to biases
           inline for (0..out_width) |i| {
