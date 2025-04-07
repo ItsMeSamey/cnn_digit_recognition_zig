@@ -28,33 +28,43 @@ pub fn init() void {
 }
 
 const stdout = std.io.getStdOut().writer();
-var buffered_stdout = std.io.bufferedWriter(stdout);
-const writer = buffered_stdout.writer();
+pub var buffered = std.io.bufferedWriter(stdout);
+pub const writer = buffered.writer();
+
+fn printSrc(src: *const std.builtin.SourceLocation) void {
+  writer.print("{s}:{d}:{d} -> {s}", .{ src.file, src.line, src.column, src.fn_name }) catch {};
+}
 
 pub fn log(comptime src: *const std.builtin.SourceLocation, comptime format: []const u8, args: anytype) void {
   if (debug) {
     if (!isAllowed(src)) {
       const gp = donemap.getOrPut(@intFromPtr(src)) catch return;
       if (gp.found_existing) return;
-      writer.print("!! {any}\n", .{src}) catch {};
+      writer.print("!! ", .{}) catch {};
+      printSrc(src);
+      writer.print("\n", .{}) catch {};
     } else {
-      writer.print(">> {any}\n", .{src}) catch {};
+      writer.print(">> ", .{}) catch {};
+      printSrc(src);
+      writer.print("\n", .{}) catch {};
       writer.print(format, args) catch {};
     }
   } else {
     if (!isAllowed(src)) return;
     writer.print(format, args) catch {};
   }
+  buffered.flush() catch {};
+}
+
+
+pub fn lognoflush(comptime src: *const std.builtin.SourceLocation, comptime format: []const u8, args: anytype) void {
+  if (!isAllowed(src)) return;
+  writer.print(format, args) catch {};
+  flushlog(src);
 }
 
 pub fn flushlog(comptime src: *const std.builtin.SourceLocation) void {
   if (!isAllowed(src)) return;
-  buffered_stdout.flush() catch {};
-}
-
-pub fn logflushing(comptime src: *const std.builtin.SourceLocation, comptime format: []const u8, args: anytype) void {
-  if (!isAllowed(src)) return;
-  writer.print(format, args) catch {};
-  flushlog(src);
+  buffered.flush() catch {};
 }
 

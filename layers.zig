@@ -517,7 +517,7 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
           inline for (0..out_width) |i| {
             self.biases[i] -= learning_rate * gradient.biases[i];
             inline for (0..width) |j| {
-              self.weights[i][j] -= learning_rate * gradient.weights[i][j];
+              self.weights[i][j] += learning_rate * gradient.weights[i][j];
             }
           }
         }

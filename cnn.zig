@@ -250,7 +250,7 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
           self.forward(n.image.*, &cache);
           gradients = self.backward(&cache, n.label);
           if (options.verbose) {
-            logger.log(&@src(), "Step: {d:4} Loss: {d:.3}\n", .{step, CategoricalCrossentropy.forward(cache[CacheSize - OutputWidth..], n.label)*100});
+            logger.writer.print("Step: {d:4} Loss: {d:.3}\n", .{step, CategoricalCrossentropy.forward(cache[CacheSize - OutputWidth..], n.label)*100}) catch {};
             // logger.log(&@src(), "Gradients {any}\n", .{gradients});
           }
 
@@ -262,7 +262,7 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
             i += 1;
 
             if (options.verbose) {
-              logger.log(&@src(), "Step: {d:4} Loss: {d:.3}\n", .{step, CategoricalCrossentropy.forward(cache[CacheSize - OutputWidth..], next.label)*100});
+              logger.writer.print("Step: {d:4} Loss: {d:.3}\n", .{step, CategoricalCrossentropy.forward(cache[CacheSize - OutputWidth..], next.label)*100}) catch {};
               // logger.log(&@src(), "Gradients {any}\n", .{gradients});
             }
           }
@@ -270,6 +270,7 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
           if (i != 1) gradients.div(@floatFromInt(i));
           self.applyGradients(&gradients, options.learning_rate);
           if (!iterator.hasNext()) break;
+          logger.buffered.flush() catch {};
         }
       }
 
