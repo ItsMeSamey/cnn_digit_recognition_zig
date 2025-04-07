@@ -370,39 +370,39 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
 
       const as_byte_size = (width + 1) * out_width * @sizeOf(F);
 
-      const Gradient = struct {
-        weights: [out_width][width]F,
-        biases: [out_width]F,
-
-        pub fn init() @This() {
-          return .{
-            .weights = undefined,
-            .biases = undefined,
-          };
-        }
-
-        pub fn reset(self: *@This()) void {
-          @setEvalBranchQuota(1000_000);
-          inline for (0..out_width) |i| {
-            self.biases[i] = 0;
-            inline for (0..width) |j| {
-              self.weights[i][j] = 0;
-            }
-          }
-        }
-
-        pub fn add(self: *@This(), other: *const @This()) void {
-          @setEvalBranchQuota(1000_000);
-          inline for (0..out_width) |i| {
-            self.biases[i] += other.biases[i];
-            inline for (0..width) |j| {
-              self.weights[i][j] += other.weights[i][j];
-            }
-          }
-        }
-      };
-
       const Layer = struct {
+        pub const Gradient = struct {
+          weights: [out_width][width]F,
+          biases: [out_width]F,
+
+          pub fn init() @This() {
+            return .{
+              .weights = undefined,
+              .biases = undefined,
+            };
+          }
+
+          pub fn reset(self: *@This()) void {
+            @setEvalBranchQuota(1000_000);
+            inline for (0..out_width) |i| {
+              self.biases[i] = 0;
+              inline for (0..width) |j| {
+                self.weights[i][j] = 0;
+              }
+            }
+          }
+
+          pub fn add(self: *@This(), other: *const @This()) void {
+            @setEvalBranchQuota(1000_000);
+            inline for (0..out_width) |i| {
+              self.biases[i] += other.biases[i];
+              inline for (0..width) |j| {
+                self.weights[i][j] += other.weights[i][j];
+              }
+            }
+          }
+        };
+
         weights: [out_width][width]F,
         biases: [out_width]F,
 

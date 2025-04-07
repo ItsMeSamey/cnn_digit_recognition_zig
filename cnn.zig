@@ -19,13 +19,14 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
     fn fromLayerType(layer_output: Layers.LayerType, h_in: comptime_int, w_in: comptime_int, in_training: bool) @This() {
       const result = layer_output(F, in_training, h_in, w_in);
       const is_simple = @TypeOf(result.layer.forward) == fn (input: *[h_in][w_in]F) *[result.height][result.width]F;
+      const gradient_type = if (is_simple) void else result.layer.Gradient;
 
       return .{
         .output_height = result.height,
         .output_width = result.width,
         .layer_type = result.layer,
-        .need_gradient = !(is_simple or @sizeOf(result.layer.Gradient) == 0),
-        .gradient_type = result.layer.Gradient,
+        .need_gradient = !(is_simple or @sizeOf(gradient_type) == 0),
+        .gradient_type = gradient_type,
         .is_simple = is_simple,
       };
     }
@@ -126,12 +127,6 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
         }
       }
 
-      fn div(self: *@This(), val: F) void {
-        inline for (Trainer.Layers, 0..) |l, i| {
-          if (l.need_gradient) @field(self.sub, std.fmt.comptimePrint("{d}", .{i})).div(val);
-        }
-      }
-
       pub fn format(value: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
         _ = options;
@@ -218,8 +213,6 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
           d1 = d2;
           d2 = temp;
         }
-
-        return gradients;
       }
 
       pub const Options = struct {
@@ -247,15 +240,18 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
 
         var step: usize = 0;
         while (true) {
-          step += 1;
-          var i: usize = 1;
-
+          var i: usize = 0;
           var gross_loss: F = 0;
+
+          step += 1;
+          gradients.reset();
+
           for (0..options.batch_size) |_| {
             const next = iterator.next() orelse break;
+
+            i += 1;
             self.forward(next.image.*, &cache);
             self.backward(&cache, next.label, &gradients);
-            i += 1;
 
             const loss = CategoricalCrossentropy.forward(cache[CacheSize - OutputWidth..], next.label);
             gross_loss += loss;
@@ -269,7 +265,6 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
             logger.writer.print("Step: {d:4}-{d:2} Loss: {d:.3}\n", .{step, i, gross_loss*100}) catch {};
           }
 
-          if (i != 1) gradients.div(@floatFromInt(i));
           self.applyGradients(&gradients, options.learning_rate / @as(F, @floatFromInt(options.batch_size)));
 
           logger.buffered.flush() catch {};

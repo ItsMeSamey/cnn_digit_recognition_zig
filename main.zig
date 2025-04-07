@@ -31,7 +31,7 @@ pub fn main() !void {
   trainer.train(mnist_iterator, .{
     .verbose = true,
     .batch_size = 32,
-    .learning_rate = 0.1,
+    .learning_rate = 1,
     .rng = rng.random(),
   });
 }
