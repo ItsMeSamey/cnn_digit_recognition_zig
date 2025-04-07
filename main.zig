@@ -4,10 +4,13 @@ const Layer = @import("layers.zig");
 const Function = @import("functions.zig");
 const MNIST = @import("read_minst.zig");
 
-const cnn = CNN(f32, 28, 28, [_]Layer.LayerType{
+const cnn = CNN(f64, 28, 28, [_]Layer.LayerType{
   Layer.getFlattener(),
-  Layer.getDense(32, Function.ReLU),
-  Layer.getDense(16, Function.Tanh),
+  Layer.getDense(128, Function.Tanh),
+  Layer.getDense(64, Function.Tanh),
+  Layer.getDense(32, Function.Tanh),
+  Layer.getDense(32, Function.Tanh),
+  Layer.getDense(16, Function.Sigmoid),
   Layer.getDense(10, Function.Softmax),
 });
 

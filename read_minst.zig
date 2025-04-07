@@ -127,13 +127,12 @@ pub fn printImage(img: anytype) void {
 
   const diff = max_val - min_val;
   const factor = @as(f32, @floatFromInt(ascii_chars.len - 1)) / @as(f32, if (@typeInfo(T) == .float) @floatCast(diff) else @floatFromInt(diff));
-  defer logger.buffered.flush() catch {};
   if (min_val == max_val) {
     for (img) |row| {
       for (row) |_| {
-        logger.writer.print("{c}", .{ascii_chars[num_chars/2]}) catch {};
+        logger.log(&@src(), "{c}", .{ascii_chars[num_chars/2]});
       }
-      logger.writer.print("\n", .{}) catch {};
+      logger.log(&@src(), "\n", .{});
     }
     return;
   }
@@ -141,9 +140,9 @@ pub fn printImage(img: anytype) void {
   for (img) |row| {
     for (row) |item| {
       const index_float = factor * @as(f32, if (@typeInfo(T) == .float) @floatCast(item - min_val) else @floatFromInt(item - min_val));
-      logger.writer.print("{c}", .{ascii_chars[@intFromFloat(@round(index_float))]}) catch {};
+      logger.log(&@src(), "{c}", .{ascii_chars[@intFromFloat(@round(index_float))]});
     }
-    logger.writer.print("\n", .{}) catch {};
+    logger.log(&@src(), "\n", .{});
   }
 }
 

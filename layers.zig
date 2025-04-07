@@ -65,16 +65,6 @@ pub fn getConvolver(filter_x: comptime_int, filter_y: comptime_int, stride_x: co
             }
           }
         }
-
-        // To calculate the average after adding n
-        pub fn div(self: *@This(), n: F) void {
-          self.bias /= n;
-          inline for (0..filter_y) |i| {
-            inline for (0..filter_x) |j| {
-              self[i][j] /= n;
-            }
-          }
-        }
       };
 
       const Layer = struct {
@@ -200,25 +190,7 @@ test getConvolver {
   try std.testing.expect(Layer.height == 17);
 }
 
-fn NoOpGradient(F: type) type {
-  return struct {
-    pub fn init() @This() {
-      return .{};
-    }
 
-    pub fn reset(_: *@This()) void {
-      // NoOp
-    }
-
-    pub fn add(_: *@This(), _: *const @This()) void {
-      // NoOp
-    }
-
-    pub fn div(_: *@This(), _: F) void {
-      // NoOp
-    }
-  };
-}
 
 pub fn getMaxPooling(pool_size_x: comptime_int, pool_size_y: comptime_int, stride_x: comptime_int, stride_y: comptime_int) LayerType {
   @setEvalBranchQuota(1000_000);
@@ -234,9 +206,9 @@ pub fn getMaxPooling(pool_size_x: comptime_int, pool_size_y: comptime_int, strid
       comptime var out_height = (height - pool_size_y) / stride_y + 1;
       if (out_height * stride_y < height) out_height += 1;
 
-      const Gradient = NoOpGradient(F); 
-
       const Layer = struct {
+        pub const Gradient = void; 
+
         const idxType = std.meta.Int(.unsigned, std.math.log2(pool_size_y*pool_size_x));
         max_idx: if (in_training) [out_height][out_width]idxType else void = if (in_training) undefined else {},
 
@@ -288,10 +260,15 @@ pub fn getMaxPooling(pool_size_x: comptime_int, pool_size_y: comptime_int, strid
           cache_out: *const [out_height][out_width]F,
           d_prev: *[height][width]F,
           d_next: *const [out_height][out_width]F,
-        ) Gradient {
+          gradient: *Gradient,
+          comptime calc_prev: bool,
+        ) void {
           if (!in_training) @compileError("Cant call " ++ @typeName(@This()) ++ ".backward() when not in_training");
           _ = cache_in;
           _ = cache_out;
+          _ = gradient;
+
+          if (!calc_prev) return;
 
           inline for (0..height) |y| {
             inline for (0..width) |x| {
@@ -423,16 +400,6 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
             }
           }
         }
-
-        pub fn div(self: *@This(), n: F) void {
-          @setEvalBranchQuota(1000_000);
-          inline for (0..out_width) |i| {
-            self.biases[i] /= n;
-            inline for (0..width) |j| {
-              self.weights[i][j] /= n;
-            }
-          }
-        }
       };
 
       const Layer = struct {
@@ -488,28 +455,39 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
           cache_out: *const [1][out_width]F,
           d_prev: *[1][width]F,
           d_next: *const [1][out_width]F,
-        ) Gradient {
+          gradient: *Gradient,
+          comptime calc_prev: bool,
+        ) void {
           @setEvalBranchQuota(1000_000);
           if (!in_training) @compileError("Cant call " ++ @typeName(@This()) ++ ".backward() when not in_training");
-          var gradient = Gradient.init();
 
           // Gradient with respect to biases
           logger.log(&@src(), "{s}\n", .{@typeName(Activate)});
-          // logger.log(&@src(), "d_next: {any}\n", .{d_next});
-          // logger.log(&@src(), "cache: {any}\n", .{cache_out});
-          Activate.backward(@ptrCast(d_next), @ptrCast(cache_out), &gradient.biases);
+          logger.log(&@src(), "d_next: {any}\n", .{d_next});
+          logger.log(&@src(), "cache: {any}\n", .{cache_out});
+          var biases: [out_width]F = undefined;
+          Activate.backward(@ptrCast(d_next), @ptrCast(cache_out), &biases);
           // logger.log(&@src(), "D ({s})\n{any}\n", .{@typeName(@This()), gradient.biases});
-          
-          inline for (0..width) |j| {
-            d_prev[0][j] = 0;
-            inline for (0..out_width) |i| {
-              gradient.weights[i][j] = gradient.biases[i] * cache_in[0][j]; // Gradient with respect to weights
-              d_prev[0][j] += gradient.biases[i] * self.weights[i][j]; // Gradient with respect to the input (d_prev)
+
+          // Gradient with respect to weights
+          inline for (0..out_width) |i| {
+            gradient.biases[i] += biases[i];
+            inline for (0..width) |j| {
+              gradient.weights[i][j] = biases[i] * cache_in[0][j];
             }
           }
 
-          // logger.log(&@src(), "d_prev: {any}\n", .{d_prev});
-          return gradient;
+          if (!calc_prev) return;
+
+          // Gradient with respect to the input (d_prev)
+          inline for (0..width) |j| {
+            d_prev[0][j] = 0;
+            inline for (0..out_width) |i| {
+              d_prev[0][j] += gradient.biases[i] * self.weights[i][j];
+            }
+          }
+
+          logger.log(&@src(), "d_prev: {any}\n", .{d_prev});
         }
 
         pub fn applyGradient(self: *@This(), gradient: *const Gradient, learning_rate: F) void {
@@ -517,7 +495,7 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
           inline for (0..out_width) |i| {
             self.biases[i] -= learning_rate * gradient.biases[i];
             inline for (0..width) |j| {
-              self.weights[i][j] += learning_rate * gradient.weights[i][j];
+              self.weights[i][j] -= learning_rate * gradient.weights[i][j];
             }
           }
         }

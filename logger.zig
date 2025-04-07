@@ -1,8 +1,12 @@
 const std = @import("std");
 
-const debug = true;
+const debug = false;
 const allowed = .{
-  .ok = false,
+  .ok = true, // hack to make this always a struct
+  // .@"cnn.zig" = true,
+  // .@"layers.zig" = true,
+  // .@"functions.zig" = true,
+  // .@"read_minst.zig" = true,
 };
 
 fn isAllowed(comptime src: *const std.builtin.SourceLocation) bool {
