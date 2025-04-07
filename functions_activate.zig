@@ -1,7 +1,4 @@
 const std = @import("std");
-const logger = @import("logger.zig");
-
-// Activation Functions //
 
 pub fn ReLU(LEN: comptime_int, F: type) type {
   return struct {
@@ -91,23 +88,6 @@ pub fn Normalize(LEN: comptime_int, F: type) type {
     pub fn backward(derivative: *const [LEN]F, cache_in: *const [LEN]F, cache_out: *const [LEN]F, output: *[LEN]F) void {
       inline for (0..LEN) |i| {
         output[i] = (cache_out[i] / cache_in[i] - cache_out[i]) * derivative[i];
-      }
-    }
-  };
-}
-
-// Loss Functions //
-
-pub fn CategoricalCrossentropy(LEN: comptime_int, F: type) type {
-  return struct {
-    pub fn forward(predictions: *const [LEN]F, target: u8) F {
-      return -@log(predictions[target]);
-    }
-
-    pub fn backward(predictions: *const [LEN]F, target: u8, output: *[LEN]F) void {
-      std.debug.assert(target < LEN);
-      inline for (0..LEN) |i| {
-        output[i] = if (i != target) 0 else -1/predictions[i];
       }
     }
   };
