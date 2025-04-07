@@ -513,7 +513,7 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
 }
 
 test getDense {
-  const LayerFn = getDense(5, @import("functions.zig").ReLU);
+  const LayerFn = getDense(5, @import("functions_activate.zig").ReLU);
   const Layer = LayerFn(f32, true, 1, 10);
   try std.testing.expect(Layer.width == 5);
   try std.testing.expect(Layer.height == 1);
