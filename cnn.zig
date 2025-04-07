@@ -1,9 +1,13 @@
 const std = @import("std");
 const logger = @import("logger.zig");
 const Layers = @import("layers.zig");
-const Functions = @import("functions.zig");
 
-pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) type {
+pub fn CNN(
+  F: type,
+  height: comptime_int, width: comptime_int,
+  loss_gen: fn(LEN: comptime_int, F: type) type,
+  layers: anytype,
+) type {
   @setEvalBranchQuota(1000_000);
   std.debug.assert(@TypeOf(layers) == [layers.len]Layers.LayerType);
 
@@ -186,12 +190,12 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
         }
       }
 
-      const CategoricalCrossentropy = Functions.CategoricalCrossentropy(OutputWidth, F);
+      const LossFn = loss_gen(OutputWidth, F);
       pub fn backward(self: *@This(), cache: *[CacheSize]F, target: u8, gradients: *Gradients) void {
         var buf: [2][MaxLayerSize]F = undefined;
         var d1 = &buf[0];
         var d2 = &buf[1];
-        CategoricalCrossentropy.backward(cache[CacheSize - OutputWidth..], target, d2[0..OutputWidth]);
+        LossFn.backward(cache[CacheSize - OutputWidth..], target, d2[0..OutputWidth]);
         logger.log(&@src(), "--- dLoss ({d}) ---\n\t{any}\n", .{target, d2[0..OutputWidth]});
 
         inline for (0..@This().Layers.len) |_i| {
@@ -253,7 +257,7 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
             self.forward(next.image.*, &cache);
             self.backward(&cache, next.label, &gradients);
 
-            const loss = CategoricalCrossentropy.forward(cache[CacheSize - OutputWidth..], next.label);
+            const loss = LossFn.forward(cache[CacheSize - OutputWidth..], next.label);
             gross_loss += loss;
             if (options.verbose) {
               logger.writer.print("{d:4}-{d:2} Loss({d}) = {d:.3}\n", .{step, i, next.label, loss*100}) catch {};

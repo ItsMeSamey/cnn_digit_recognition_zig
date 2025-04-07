@@ -1,15 +1,16 @@
 const std = @import("std");
 const CNN = @import("cnn.zig").CNN;
 const Layer = @import("layers.zig");
-const Function = @import("functions.zig");
+const Activation = @import("functions_activate.zig");
+const Loss = @import("functions_loss.zig");
 const MNIST = @import("read_minst.zig");
 
-const cnn = CNN(f64, 28, 28, [_]Layer.LayerType{
+const cnn = CNN(f64, 28, 28, Loss.MeanSquaredError, [_]Layer.LayerType{
   Layer.getFlattener(),
-  Layer.getDense(64, Function.Tanh),
-  Layer.getDense(32, Function.Tanh),
-  Layer.getDense(16, Function.Sigmoid),
-  Layer.getDense(10, Function.Normalize),
+  Layer.getDense(64, Activation.Tanh),
+  Layer.getDense(32, Activation.Tanh),
+  Layer.getDense(16, Activation.Sigmoid),
+  Layer.getDense(10, Activation.Normalize),
 });
 
 const MNISTIterator = MNIST.GetMinstIterator(28, 28);
