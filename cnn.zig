@@ -1,4 +1,5 @@
 const std = @import("std");
+const logger = @import("logger.zig");
 const Layers = @import("layers.zig");
 const Functions = @import("functions.zig");
 
@@ -22,7 +23,7 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
         .output_height = result.height,
         .output_width = result.width,
         .layer_type = result.layer,
-        .need_gradient = @TypeOf(result.layer.forward) == fn (input: *[height][width]F) *[result.height][result.width]F or @sizeOf(backward_returntype) == 0,
+        .need_gradient = !(@TypeOf(result.layer.forward) == fn (input: *[h_in][w_in]F) *[result.height][result.width]F or @sizeOf(backward_returntype) == 0),
         .backward_output = backward_returntype,
       };
     }
@@ -93,7 +94,7 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
         for (Trainer.Layers, 0..) |l, i| {
           fields = fields ++ &[1]std.builtin.Type.StructField{.{
             .name = std.fmt.comptimePrint("{d}", .{i}),
-            .type = if (l.need_gradient and @typeInfo(l.backward_output) != .pointer) l.backward_output else void,
+            .type = if (l.need_gradient) l.backward_output else void,
             .default_value_ptr = null,
             .is_comptime = false,
             .alignment = @alignOf(l.layer_type),
@@ -119,13 +120,21 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
       fn add(self: *@This(), other: *@This()) void {
         inline for (Trainer.Layers, 0..) |l, i| {
           const name = std.fmt.comptimePrint("{d}", .{i});
-          if (l.need_gradient) @field(self.sub, name).add(@field(other, name));
+          if (l.need_gradient) @field(self.sub, name).add(&@field(other.sub, name));
         }
       }
 
       fn div(self: *@This(), val: F) void {
         inline for (Trainer.Layers, 0..) |l, i| {
           if (l.need_gradient) @field(self.sub, std.fmt.comptimePrint("{d}", .{i})).div(val);
+        }
+      }
+
+      pub fn format(value: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        inline for (Trainer.Layers, 0..) |l, i| {
+          try std.fmt.format(writer, "\n-------- {s} --------\n{any}\n", .{@typeName(l.layer_type), @field(value.sub, std.fmt.comptimePrint("{d}", .{i}))});
         }
       }
     };
@@ -144,15 +153,17 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
         return retval;
       }
 
-      fn getCacheSizeArray() [@This().Layers.len + 1]comptime_int {
-        comptime var retval: [@This().Layers.len + 1]comptime_int = undefined;
-        retval[0] = height * width;
-        inline for (1..@This().Layers.len+1) |i| {
-          if (@typeInfo(@This().Layers[i-1].backward_output) == .pointer) {
-            retval[i] = retval[i-1];
+      fn getCacheSizeArray() [@This().Layers.len + 2]comptime_int {
+        comptime var retval: [@This().Layers.len + 2]comptime_int = undefined;
+        retval[0] = 0;
+        retval[1] = height * width;
+        inline for (0..@This().Layers.len) |i| {
+          if (@typeInfo(@This().Layers[i].backward_output) == .pointer) {
+            retval[i+2] = retval[i+1];
+            retval[i+1] = retval[i];
           } else {
-            const dims = getLayerInputDims(i);
-            retval[i] = retval[i-1] + dims[0] * dims[1];
+            const dims = getLayerInputDims(i+1);
+            retval[i+2] = retval[i+1] + dims[0] * dims[1];
           }
         }
         return retval;
@@ -167,11 +178,14 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
             @as(*[height][width]F, @ptrCast(cache))[i][j] = @as(F, @floatFromInt(val)) / @as(F, 255);
           }
         }
+        @import("read_minst.zig").printImage(@as(*[height][width]F, @ptrCast(cache)));
 
         inline for (@This().Layers, 0..) |l, i| {
           const name = std.fmt.comptimePrint("{d}", .{i});
           if (@typeInfo(l.backward_output) == .pointer) continue;
-          @field(self.layers, name).forward(@ptrCast(cache[CacheSizeArray[i]..].ptr), @ptrCast(cache[CacheSizeArray[i+1]..].ptr));
+          // logger.log(@src(), "Forward input ({s})\n\t{any}\n", .{@typeName(l.layer_type), cache[CacheSizeArray[i]..CacheSizeArray[i+1]]});
+          @field(self.layers, name).forward(@ptrCast(cache[if (i == 0) 0 else CacheSizeArray[i]..].ptr), @ptrCast(cache[CacheSizeArray[i+1]..].ptr));
+          logger.log(@src(), "Forward Output ({s})\n\t{any}\n", .{@typeName(l.layer_type), @as(*[l.output_height*l.output_width]F, @ptrCast(cache[CacheSizeArray[i+1]..].ptr))});
         }
       }
 
@@ -180,18 +194,18 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
         var buf: [2][MaxLayerSize]F = undefined;
         var d1 = &buf[0];
         var d2 = &buf[1];
-        CategoricalCrossentropy.backward(cache[CacheSize - OutputWidth..], target, d1[0..OutputWidth]);
+        CategoricalCrossentropy.backward(cache[CacheSize - OutputWidth..], target, d2[0..OutputWidth]);
+        logger.log(@src(), "--- dLoss ({d}) ---\n\t{any}\n", .{target, d2[0..OutputWidth]});
 
         var gradients: Gradients = undefined;
-
         inline for (0..@This().Layers.len) |_i| {
           const i = @This().Layers.len - 1 - _i;
           const l = @This().Layers[i];
           if (@typeInfo(l.backward_output) == .pointer) continue;
           const name = std.fmt.comptimePrint("{d}", .{i});
           const grad_out = @field(self.layers, name).backward(
-            @ptrCast(&cache[CacheSizeArray[i]..]),
-            @ptrCast(&cache[CacheSizeArray[i+1]..]),
+            @ptrCast(cache[CacheSizeArray[i]..].ptr),
+            @ptrCast(cache[CacheSizeArray[i+1]..].ptr),
             @ptrCast(d1),
             @ptrCast(d2),
           );
@@ -209,11 +223,24 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
         verbose: bool = true,
         batch_size: u32,
         learning_rate: F,
+        rng: std.Random,
       };
       pub fn train(self: *@This(), iterator_readonly: anytype, options: Options) void {
         var iterator = iterator_readonly;
         var gradients: Gradients = undefined;
         var cache: [CacheSize]F = undefined;
+
+        inline for (0..@This().Layers.len) |i| {
+          const name = std.fmt.comptimePrint("{d}", .{i});
+          logger.log(@src(), "Reset {s}\n", .{@typeName(@TypeOf(@field(self.layers, name)))});
+          if (@TypeOf(@field(gradients.sub, name)) == void) continue;
+          @field(self.layers, name).reset(options.rng);
+        }
+
+        // inline for (0..@This().Layers.len) |i| {
+        //   logger.log(@src(), "Layer {d}\n", .{i});
+        //   logger.log(@src(), "{any}\n", .{@field(self.layers, std.fmt.comptimePrint("{d}", .{i}))});
+        // }
 
         var step: usize = 0;
         while (true) {
@@ -222,6 +249,10 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
           const n = iterator.next() orelse break;
           self.forward(n.image.*, &cache);
           gradients = self.backward(&cache, n.label);
+          if (options.verbose) {
+            logger.log(@src(), "Step: {d:4} Loss: {d:.3}\n", .{step, CategoricalCrossentropy.forward(cache[CacheSize - OutputWidth..], n.label)*100});
+            // logger.log(@src(), "Gradients {any}\n", .{gradients});
+          }
 
           for (1..options.batch_size) |_| {
             const next = iterator.next() orelse break;
@@ -230,11 +261,13 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
             gradients.add(&grad);
             i += 1;
 
-            const loss = CategoricalCrossentropy.forward(cache[CacheSize - OutputWidth..], next.label);
-            if (options.verbose) std.debug.print("Step:{d:4} Loss: {d}\n", .{step, loss});
+            if (options.verbose) {
+              logger.log(@src(), "Step: {d:4} Loss: {d:.3}\n", .{step, CategoricalCrossentropy.forward(cache[CacheSize - OutputWidth..], next.label)*100});
+              // logger.log(@src(), "Gradients {any}\n", .{gradients});
+            }
           }
 
-          gradients.div(@floatFromInt(i));
+          if (i != 1) gradients.div(@floatFromInt(i));
           self.applyGradients(&gradients, options.learning_rate);
           if (!iterator.hasNext()) break;
         }
@@ -244,7 +277,7 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
         inline for (0..@This().Layers.len) |i| {
           const name = std.fmt.comptimePrint("{d}", .{i});
           if (@TypeOf(@field(gradients.sub, name)) == void) continue;
-          @field(self.layers, name).applyGradient(@field(gradients.sub, name), learning_rate);
+          @field(self.layers, name).applyGradient(&@field(gradients.sub, name), learning_rate);
         }
       }
     };

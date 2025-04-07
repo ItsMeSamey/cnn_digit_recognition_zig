@@ -7,16 +7,19 @@ const MNIST = @import("read_minst.zig");
 const cnn = CNN(f32, 28, 28, [_]Layer.LayerType{
   Layer.getFlattener(),
   Layer.getDense(32, Function.ReLU),
-  Layer.getDense(16, Function.Sigmoid),
+  Layer.getDense(16, Function.Tanh),
   Layer.getDense(10, Function.Softmax),
 });
 
 const MNISTIterator = MNIST.GetMinstIterator(28, 28);
 
 pub fn main() !void {
+  @import("logger.zig").init();
+
   var gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
   defer if (gpa.deinit() != .ok) @panic("Memory leak detected!!");
   const allocator = gpa.allocator();
+  var rng = std.Random.DefaultPrng.init(0);
 
   var trainer = cnn.Trainer{.layers = undefined};
   const mnist_iterator = try MNISTIterator.init("./datasets/train-images.idx3-ubyte", "./datasets/train-labels.idx1-ubyte", allocator);
@@ -24,8 +27,9 @@ pub fn main() !void {
 
   trainer.train(mnist_iterator, .{
     .verbose = true,
-    .batch_size = 32,
-    .learning_rate = 0.01,
+    .batch_size = 1,
+    .learning_rate = 0.001,
+    .rng = rng.random(),
   });
 }
 

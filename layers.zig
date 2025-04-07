@@ -1,4 +1,5 @@
 const std = @import("std");
+const logger = @import("logger.zig");
 
 pub const LayerType = fn (F: type, in_training: bool, width: comptime_int, height: comptime_int) LayerOutputType;
 pub const LayerOutputType = struct {
@@ -97,7 +98,7 @@ pub fn getConvolver(filter_x: comptime_int, filter_y: comptime_int, stride_x: co
           }
         }
 
-        pub inline fn asBytes(self: *@This()) [as_byte_size]u8 {
+        pub fn asBytes(self: *@This()) [as_byte_size]u8 {
           var bytes: [as_byte_size]u8 = undefined;
           @memcpy(bytes[0..filter_x * filter_y * @sizeOf(F)], std.mem.asBytes(&self.filter));
           @memcpy(bytes[filter_x * filter_y * @sizeOf(F)..], std.mem.asBytes(&self.bias));
@@ -111,7 +112,7 @@ pub fn getConvolver(filter_x: comptime_int, filter_y: comptime_int, stride_x: co
           return self;
         }
 
-        pub inline fn forward(self: *@This(), input: *[height][width]F, output: *[out_height][out_width]F) void {
+        pub fn forward(self: *@This(), input: *[height][width]F, output: *[out_height][out_width]F) void {
           inline for (0..out_height) |out_y| {
             inline for (0..out_width) |out_x| {
               var sum: F = self.bias;
@@ -174,10 +175,10 @@ pub fn getConvolver(filter_x: comptime_int, filter_y: comptime_int, stride_x: co
         }
 
         pub fn applyGradient(self: *@This(), gradient: *const Gradient, learning_rate: F) void {
-          self.bias -= learning_rate * gradient.bias;
+          self.bias += learning_rate * gradient.bias;
           inline for (0..out_width) |i| {
             inline for (0..width) |j| {
-              self.filter[i][j] -= learning_rate * gradient.filter[i][j];
+              self.filter[i][j] += learning_rate * gradient.filter[i][j];
             }
           }
         }
@@ -254,7 +255,7 @@ pub fn getMaxPooling(pool_size_x: comptime_int, pool_size_y: comptime_int, strid
           return .{}; // Nothing to restore
         }
 
-        pub inline fn forward(self: *@This(), input: *[height][width]F, output: *[out_height][out_width]F) void {
+        pub fn forward(self: *@This(), input: *[height][width]F, output: *[out_height][out_width]F) void {
           inline for (0..out_height) |out_y| {
             inline for (0..out_width) |out_x| {
               var max_val = -std.math.inf(F);
@@ -356,7 +357,7 @@ pub fn getFlattener() LayerType {
       const out_width = width * height;
 
       const Layer = struct {
-        pub inline fn forward(input: *[height][width]F) *[1][out_width]F {
+        pub fn forward(input: *[height][width]F) *[1][out_width]F {
           return @ptrCast(input);
         }
 
@@ -414,6 +415,7 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
         }
 
         pub fn add(self: *@This(), other: *const @This()) void {
+          @setEvalBranchQuota(1000_000);
           inline for (0..out_width) |i| {
             self.biases[i] += other.biases[i];
             inline for (0..width) |j| {
@@ -423,6 +425,7 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
         }
 
         pub fn div(self: *@This(), n: F) void {
+          @setEvalBranchQuota(1000_000);
           inline for (0..out_width) |i| {
             self.biases[i] /= n;
             inline for (0..width) |j| {
@@ -444,6 +447,7 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
         }
 
         pub fn reset(self: *@This(), rng: std.Random) void {
+          @setEvalBranchQuota(1000_000);
           inline for (0..out_width) |i| {
             self.biases[i] = rng.float(F) - 0.5;
             inline for (0..width) |j| {
@@ -452,7 +456,7 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
           }
         }
 
-        pub inline fn asBytes(self: *@This()) [as_byte_size]u8 {
+        pub fn asBytes(self: *@This()) [as_byte_size]u8 {
           var bytes: [as_byte_size]u8 = undefined;
           @memcpy(bytes[0..width * out_width * @sizeOf(F)], std.mem.asBytes(&self.weights));
           @memcpy(bytes[width * out_width * @sizeOf(F)..], std.mem.asBytes(&self.biases));
@@ -466,7 +470,8 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
           return self;
         }
 
-        pub inline fn forward(self: *@This(), input: *[1][width]F, output: *[1][out_width]F) void {
+        pub fn forward(self: *@This(), input: *[1][width]F, output: *[1][out_width]F) void {
+          @setEvalBranchQuota(1000_000);
           inline for (0..out_width) |i| {
             var sum: F = self.biases[i];
             inline for (0..width) |j| {
@@ -486,38 +491,29 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
         ) Gradient {
           @setEvalBranchQuota(1000_000);
           if (!in_training) @compileError("Cant call " ++ @typeName(@This()) ++ ".backward() when not in_training");
-
           var gradient = Gradient.init();
-          gradient.reset();
-
-          var activate_backward_output: [out_width]F = undefined;
-          Activate.backward(&d_next[0], &cache_out[0], &activate_backward_output);
 
           // Gradient with respect to biases
-          inline for (0..out_width) |i| {
-            gradient.biases[i] += activate_backward_output[i];
-          }
-
-          // Gradient with respect to weights
-          inline for (0..out_width) |i| {
-            inline for (0..width) |j| {
-              gradient.weights[i][j] += activate_backward_output[i] * cache_in[0][j];
-            }
-          }
-
-          // Gradient with respect to the input (d_prev)
+          logger.log(@src(), "{s}\n", .{@typeName(Activate)});
+          // logger.log(@src(), "d_next: {any}\n", .{d_next});
+          // logger.log(@src(), "cache: {any}\n", .{cache_out});
+          Activate.backward(@ptrCast(d_next), @ptrCast(cache_out), &gradient.biases);
+          // logger.log(@src(), "D ({s})\n{any}\n", .{@typeName(@This()), gradient.biases});
+          
           inline for (0..width) |j| {
-            var sum: F = 0;
+            d_prev[0][j] = 0;
             inline for (0..out_width) |i| {
-              sum += activate_backward_output[i] * self.weights[i][j];
+              gradient.weights[i][j] = gradient.biases[i] * cache_in[0][j]; // Gradient with respect to weights
+              d_prev[0][j] += gradient.biases[i] * self.weights[i][j]; // Gradient with respect to the input (d_prev)
             }
-            d_prev[0][j] = sum;
           }
 
+          // logger.log(@src(), "d_prev: {any}\n", .{d_prev});
           return gradient;
         }
 
         pub fn applyGradient(self: *@This(), gradient: *const Gradient, learning_rate: F) void {
+          @setEvalBranchQuota(1000_000);
           inline for (0..out_width) |i| {
             self.biases[i] -= learning_rate * gradient.biases[i];
             inline for (0..width) |j| {

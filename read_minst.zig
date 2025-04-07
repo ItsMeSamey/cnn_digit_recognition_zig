@@ -1,4 +1,5 @@
 const std = @import("std");
+const logger = @import("logger.zig");
 
 /// This function generates a struct that can be used to load minst dataset 
 pub fn GetMinstIterator(comptime ROWS: u32, comptime COLS: u32) type {
@@ -83,7 +84,7 @@ pub fn GetMinstIterator(comptime ROWS: u32, comptime COLS: u32) type {
     }
 
     pub fn hasNext(self: *@This()) bool {
-      return self.index >= self.count;
+      return self.index < self.count;
     }
 
     pub fn reset(self: *@This()) void {
@@ -92,7 +93,6 @@ pub fn GetMinstIterator(comptime ROWS: u32, comptime COLS: u32) type {
   };
 }
 
-const stdout = std.io.getStdOut().writer();
 pub fn printImage(img: anytype) void {
   const ascii_chars = [_]u8{
     ' ', '.', ',', '\'', ':', '`', 't', '-', '_', '!', 'i', 'l', '|', ';',
@@ -124,16 +124,15 @@ pub fn printImage(img: anytype) void {
     }
   }
 
-  const writer = stdout;
 
   const diff = max_val - min_val;
-  const factor = @as(f32, @floatFromInt(ascii_chars.len - 1)) / @as(f32, if (@typeInfo(T) == .float) @floatFromInt(diff) else @floatFromInt(diff));
+  const factor = @as(f32, @floatFromInt(ascii_chars.len - 1)) / @as(f32, if (@typeInfo(T) == .float) @floatCast(diff) else @floatFromInt(diff));
   if (min_val == max_val) {
     for (img) |row| {
       for (row) |_| {
-        writer.print("{c}", .{ascii_chars[num_chars/2]}) catch {};
+        logger.log(@src(), "{c}", .{ascii_chars[num_chars/2]});
       }
-      writer.print("\n", .{}) catch {};
+      logger.log(@src(), "\n", .{});
     }
     return;
   }
@@ -141,9 +140,9 @@ pub fn printImage(img: anytype) void {
   for (img) |row| {
     for (row) |item| {
       const index_float = factor * @as(f32, if (@typeInfo(T) == .float) @floatCast(item - min_val) else @floatFromInt(item - min_val));
-      writer.print("{c}", .{ascii_chars[@intFromFloat(@round(index_float))]}) catch {};
+      logger.log(@src(), "{c}", .{ascii_chars[@intFromFloat(@round(index_float))]});
     }
-    writer.print("\n", .{}) catch {};
+    logger.log(@src(), "\n", .{});
   }
 }
 
