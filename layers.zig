@@ -17,7 +17,9 @@ pub const LayerOutputType = struct {
   //   cache_out: *const [out_height][out_width]F,
   //   d_prev: *[height][width]F,
   //   d_next: *const [out_height][out_width]F,
-  // ) Gradient
+  //   gradient: *Gradient,
+  //   comptime calc_prev: bool,
+  // ) void
   // pub fn applyGradient(self: *@This(), gradient: *const Gradient, learning_rate: F) void
   layer:  type
 };
@@ -466,7 +468,7 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
           logger.log(&@src(), "d_next: {any}\n", .{d_next});
           logger.log(&@src(), "cache: {any}\n", .{cache_out});
           var biases: [out_width]F = undefined;
-          Activate.backward(@ptrCast(d_next), @ptrCast(cache_out), &biases);
+          Activate.backward(@ptrCast(d_next), @ptrCast(cache_in), @ptrCast(cache_out), &biases);
           // logger.log(&@src(), "D ({s})\n{any}\n", .{@typeName(@This()), gradient.biases});
 
           // Gradient with respect to weights

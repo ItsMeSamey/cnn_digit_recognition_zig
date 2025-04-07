@@ -6,12 +6,10 @@ const MNIST = @import("read_minst.zig");
 
 const cnn = CNN(f64, 28, 28, [_]Layer.LayerType{
   Layer.getFlattener(),
-  Layer.getDense(128, Function.Tanh),
   Layer.getDense(64, Function.Tanh),
   Layer.getDense(32, Function.Tanh),
-  Layer.getDense(32, Function.Tanh),
   Layer.getDense(16, Function.Sigmoid),
-  Layer.getDense(10, Function.Softmax),
+  Layer.getDense(10, Function.Normalize),
 });
 
 const MNISTIterator = MNIST.GetMinstIterator(28, 28);

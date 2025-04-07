@@ -180,7 +180,7 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
         inline for (@This().Layers, 0..) |l, i| {
           const name = std.fmt.comptimePrint("{d}", .{i});
           if (l.is_simple) continue;
-          // logger.log(&@src(), "Forward input ({s})\n\t{any}\n", .{@typeName(l.layer_type), cache[CacheSizeArray[i]..CacheSizeArray[i+1]]});
+          logger.log(&@src(), "Forward input ({s})\n\t{any}\n", .{@typeName(l.layer_type), cache[CacheSizeArray[i]..CacheSizeArray[i+1]]});
           @field(self.layers, name).forward(@ptrCast(cache[if (i == 0) 0 else CacheSizeArray[i]..].ptr), @ptrCast(cache[CacheSizeArray[i+1]..].ptr));
           logger.log(&@src(), "Forward Output ({s})\n\t{any}\n", .{@typeName(l.layer_type), @as(*[l.output_height*l.output_width]F, @ptrCast(cache[CacheSizeArray[i+1]..].ptr))});
         }
@@ -256,7 +256,7 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
             const loss = CategoricalCrossentropy.forward(cache[CacheSize - OutputWidth..], next.label);
             gross_loss += loss;
             if (options.verbose) {
-              logger.writer.print("Step: {d:4}-{d:2} Loss: {d:.3}\n", .{step, i, loss*100}) catch {};
+              logger.writer.print("{d:4}-{d:2} Loss({d}) = {d:.3}\n", .{step, i, next.label, loss*100}) catch {};
               // logger.log(&@src(), "Gradients {any}\n", .{gradients});
             }
           }

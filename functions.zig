@@ -11,9 +11,10 @@ pub fn ReLU(LEN: comptime_int, F: type) type {
       }
     }
 
-    pub fn backward(derivative: *const [LEN]F, cache: *const [LEN]F, output: *[LEN]F) void {
+    pub fn backward(derivative: *const [LEN]F, cache_in: *const [LEN]F, cache_out: *const [LEN]F, output: *[LEN]F) void {
+      _ = cache_in;
       inline for (0..LEN) |i| {
-        output[i] = if (cache[i] == 0) 0 else derivative[i];
+        output[i] = if (cache_out[i] == 0) 0 else derivative[i];
       }
     }
   };
@@ -27,9 +28,10 @@ pub fn Tanh(LEN: comptime_int, F: type) type {
       }
     }
 
-    pub fn backward(derivative: *const [LEN]F, cache: *const [LEN]F, output: *[LEN]F) void {
+    pub fn backward(derivative: *const [LEN]F, cache_in: *const [LEN]F, cache_out: *const [LEN]F, output: *[LEN]F) void {
+      _ = cache_in;
       inline for (0..LEN) |i| {
-        output[i] = (1 - cache[i] * cache[i]) * derivative[i];
+        output[i] = (1 - cache_out[i] * cache_out[i]) * derivative[i];
       }
     }
   };
@@ -43,9 +45,10 @@ pub fn Sigmoid(LEN: comptime_int, F: type) type {
       }
     }
 
-    pub fn backward(derivative: *const [LEN]F, cache: *const [LEN]F, output: *[LEN]F) void {
+    pub fn backward(derivative: *const [LEN]F, cache_in: *const [LEN]F, cache_out: *const [LEN]F, output: *[LEN]F) void {
+      _ = cache_in;
       inline for (0..LEN) |i| {
-        output[i] = cache[i] * (1 - cache[i]) * derivative[i];
+        output[i] = cache_out[i] * (1 - cache_out[i]) * derivative[i];
       }
     }
   };
@@ -64,9 +67,30 @@ pub fn Softmax(LEN: comptime_int, F: type) type {
       }
     }
 
-    pub fn backward(derivative: *const [LEN]F, cache: *const [LEN]F, output: *[LEN]F) void {
+    pub fn backward(derivative: *const [LEN]F, cache_in: *const [LEN]F, cache_out: *const [LEN]F, output: *[LEN]F) void {
+      _ = cache_in;
       inline for (0..LEN) |i| {
-        output[i] = cache[i] * (1 - cache[i]) * derivative[i];
+        output[i] = cache_out[i] * (1 - cache_out[i]) * derivative[i];
+      }
+    }
+  };
+}
+
+pub fn Normalize(LEN: comptime_int, F: type) type {
+  return struct {
+    pub fn forward(input: *const [LEN]F, output: *[LEN]F) void {
+      var sum: F = 0;
+      inline for (0..LEN) |i| {
+        sum += input[i];
+      }
+      inline for (0..LEN) |i| {
+        output[i] = input[i] / sum;
+      }
+    }
+
+    pub fn backward(derivative: *const [LEN]F, cache_in: *const [LEN]F, cache_out: *const [LEN]F, output: *[LEN]F) void {
+      inline for (0..LEN) |i| {
+        output[i] = (cache_out[i] / cache_in[i] - cache_out[i]) * derivative[i];
       }
     }
   };
