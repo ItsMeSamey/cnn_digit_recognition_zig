@@ -183,9 +183,9 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
         inline for (@This().Layers, 0..) |l, i| {
           const name = std.fmt.comptimePrint("{d}", .{i});
           if (@typeInfo(l.backward_output) == .pointer) continue;
-          // logger.log(@src(), "Forward input ({s})\n\t{any}\n", .{@typeName(l.layer_type), cache[CacheSizeArray[i]..CacheSizeArray[i+1]]});
+          // logger.log(&@src(), "Forward input ({s})\n\t{any}\n", .{@typeName(l.layer_type), cache[CacheSizeArray[i]..CacheSizeArray[i+1]]});
           @field(self.layers, name).forward(@ptrCast(cache[if (i == 0) 0 else CacheSizeArray[i]..].ptr), @ptrCast(cache[CacheSizeArray[i+1]..].ptr));
-          logger.log(@src(), "Forward Output ({s})\n\t{any}\n", .{@typeName(l.layer_type), @as(*[l.output_height*l.output_width]F, @ptrCast(cache[CacheSizeArray[i+1]..].ptr))});
+          logger.log(&@src(), "Forward Output ({s})\n\t{any}\n", .{@typeName(l.layer_type), @as(*[l.output_height*l.output_width]F, @ptrCast(cache[CacheSizeArray[i+1]..].ptr))});
         }
       }
 
@@ -195,7 +195,7 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
         var d1 = &buf[0];
         var d2 = &buf[1];
         CategoricalCrossentropy.backward(cache[CacheSize - OutputWidth..], target, d2[0..OutputWidth]);
-        logger.log(@src(), "--- dLoss ({d}) ---\n\t{any}\n", .{target, d2[0..OutputWidth]});
+        logger.log(&@src(), "--- dLoss ({d}) ---\n\t{any}\n", .{target, d2[0..OutputWidth]});
 
         var gradients: Gradients = undefined;
         inline for (0..@This().Layers.len) |_i| {
@@ -232,14 +232,14 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
 
         inline for (0..@This().Layers.len) |i| {
           const name = std.fmt.comptimePrint("{d}", .{i});
-          logger.log(@src(), "Reset {s}\n", .{@typeName(@TypeOf(@field(self.layers, name)))});
+          logger.log(&@src(), "Reset {s}\n", .{@typeName(@TypeOf(@field(self.layers, name)))});
           if (@TypeOf(@field(gradients.sub, name)) == void) continue;
           @field(self.layers, name).reset(options.rng);
         }
 
         // inline for (0..@This().Layers.len) |i| {
-        //   logger.log(@src(), "Layer {d}\n", .{i});
-        //   logger.log(@src(), "{any}\n", .{@field(self.layers, std.fmt.comptimePrint("{d}", .{i}))});
+        //   logger.log(&@src(), "Layer {d}\n", .{i});
+        //   logger.log(&@src(), "{any}\n", .{@field(self.layers, std.fmt.comptimePrint("{d}", .{i}))});
         // }
 
         var step: usize = 0;
@@ -250,8 +250,8 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
           self.forward(n.image.*, &cache);
           gradients = self.backward(&cache, n.label);
           if (options.verbose) {
-            logger.log(@src(), "Step: {d:4} Loss: {d:.3}\n", .{step, CategoricalCrossentropy.forward(cache[CacheSize - OutputWidth..], n.label)*100});
-            // logger.log(@src(), "Gradients {any}\n", .{gradients});
+            logger.log(&@src(), "Step: {d:4} Loss: {d:.3}\n", .{step, CategoricalCrossentropy.forward(cache[CacheSize - OutputWidth..], n.label)*100});
+            // logger.log(&@src(), "Gradients {any}\n", .{gradients});
           }
 
           for (1..options.batch_size) |_| {
@@ -262,8 +262,8 @@ pub fn CNN(F: type, height: comptime_int, width: comptime_int, layers: anytype) 
             i += 1;
 
             if (options.verbose) {
-              logger.log(@src(), "Step: {d:4} Loss: {d:.3}\n", .{step, CategoricalCrossentropy.forward(cache[CacheSize - OutputWidth..], next.label)*100});
-              // logger.log(@src(), "Gradients {any}\n", .{gradients});
+              logger.log(&@src(), "Step: {d:4} Loss: {d:.3}\n", .{step, CategoricalCrossentropy.forward(cache[CacheSize - OutputWidth..], next.label)*100});
+              // logger.log(&@src(), "Gradients {any}\n", .{gradients});
             }
           }
 

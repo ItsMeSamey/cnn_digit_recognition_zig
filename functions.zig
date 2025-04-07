@@ -78,7 +78,7 @@ pub fn CategoricalCrossentropy(LEN: comptime_int, F: type) type {
   return struct {
     pub fn forward(predictions: *const [LEN]F, target: u32) F {
       std.debug.assert(target < LEN);
-      logger.log(@src(), "predictions: {any}\n", .{predictions});
+      logger.log(&@src(), "predictions: {any}\n", .{predictions});
       // std.time.sleep(std.time.ns_per_ms * 500);
       return -@log(predictions[target]);
     }

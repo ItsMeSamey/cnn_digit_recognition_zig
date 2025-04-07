@@ -130,9 +130,9 @@ pub fn printImage(img: anytype) void {
   if (min_val == max_val) {
     for (img) |row| {
       for (row) |_| {
-        logger.log(@src(), "{c}", .{ascii_chars[num_chars/2]});
+        logger.log(&@src(), "{c}", .{ascii_chars[num_chars/2]});
       }
-      logger.log(@src(), "\n", .{});
+      logger.log(&@src(), "\n", .{});
     }
     return;
   }
@@ -140,9 +140,9 @@ pub fn printImage(img: anytype) void {
   for (img) |row| {
     for (row) |item| {
       const index_float = factor * @as(f32, if (@typeInfo(T) == .float) @floatCast(item - min_val) else @floatFromInt(item - min_val));
-      logger.log(@src(), "{c}", .{ascii_chars[@intFromFloat(@round(index_float))]});
+      logger.log(&@src(), "{c}", .{ascii_chars[@intFromFloat(@round(index_float))]});
     }
-    logger.log(@src(), "\n", .{});
+    logger.log(&@src(), "\n", .{});
   }
 }
 

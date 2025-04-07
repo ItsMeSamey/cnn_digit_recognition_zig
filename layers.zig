@@ -494,11 +494,11 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
           var gradient = Gradient.init();
 
           // Gradient with respect to biases
-          logger.log(@src(), "{s}\n", .{@typeName(Activate)});
-          // logger.log(@src(), "d_next: {any}\n", .{d_next});
-          // logger.log(@src(), "cache: {any}\n", .{cache_out});
+          logger.log(&@src(), "{s}\n", .{@typeName(Activate)});
+          // logger.log(&@src(), "d_next: {any}\n", .{d_next});
+          // logger.log(&@src(), "cache: {any}\n", .{cache_out});
           Activate.backward(@ptrCast(d_next), @ptrCast(cache_out), &gradient.biases);
-          // logger.log(@src(), "D ({s})\n{any}\n", .{@typeName(@This()), gradient.biases});
+          // logger.log(&@src(), "D ({s})\n{any}\n", .{@typeName(@This()), gradient.biases});
           
           inline for (0..width) |j| {
             d_prev[0][j] = 0;
@@ -508,7 +508,7 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
             }
           }
 
-          // logger.log(@src(), "d_prev: {any}\n", .{d_prev});
+          // logger.log(&@src(), "d_prev: {any}\n", .{d_prev});
           return gradient;
         }
 
