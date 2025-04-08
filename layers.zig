@@ -132,7 +132,7 @@ pub fn getConvolver(filter_x: comptime_int, filter_y: comptime_int, stride_x: co
                 for (0..filter_x) |filter_x_offset| {
                   const in_y = out_y * stride_y + filter_y_offset;
                   const in_x = out_x * stride_x + filter_x_offset;
-                  if (comptime in_y >= height and in_x >= width) continue;
+                  if (in_y >= height and in_x >= width) continue;
                   sum += input[in_y][in_x] * self.filter[filter_y_offset][filter_x_offset];
                 }
               }
@@ -172,7 +172,7 @@ pub fn getConvolver(filter_x: comptime_int, filter_y: comptime_int, stride_x: co
                 for (0..filter_x) |filter_x_offset| {
                   const in_y = out_y * stride_y + filter_y_offset;
                   const in_x = out_x * stride_x + filter_x_offset;
-                  if (comptime in_y >= height and in_x >= width) continue;
+                  if (in_y >= height and in_x >= width) continue;
                   // Gradient with respect to the filter
                   gradient.filter[filter_y_offset][filter_x_offset] += d_next[out_y][out_x] * cache_in[in_y][in_x];
 
@@ -258,7 +258,7 @@ pub fn getMaxPooling(pool_size_x: comptime_int, pool_size_y: comptime_int, strid
                 for (0..pool_size_x) |pool_x| {
                   const in_y = out_y * stride_y + pool_y;
                   const in_x = out_x * stride_x + pool_x;
-                  if (comptime in_y >= height and in_x >= width) continue;
+                  if (in_y >= height and in_x >= width) continue;
 
                   if (input[in_y][in_x] > max_val) {
                     max_val = input[in_y][in_x];
