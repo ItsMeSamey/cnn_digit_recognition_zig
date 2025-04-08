@@ -108,10 +108,10 @@ pub fn getConvolver(filter_x: comptime_int, filter_y: comptime_int, stride_x: co
         }
 
         pub fn reset(self: *@This(), rng: std.Random) void {
-          self.bias = 0;
+          self.bias = rng.float(F) - 0.5;
           inline for (0..filter_x) |i| {
             inline for (0..filter_y) |j| {
-              self.filter[i][j] = rng.float(F) - 0.5;
+              self.filter[i][j] = rng.float(F)*10 - 5;
             }
           }
         }
@@ -507,9 +507,9 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
         pub fn applyGradient(self: *@This(), gradient: *const Gradient, learning_rate: F) void {
           @setEvalBranchQuota(1000_000);
           inline for (0..out_width) |i| {
-            self.biases[i] -= learning_rate * gradient.biases[i];
+            self.biases[i] += learning_rate * gradient.biases[i];
             inline for (0..width) |j| {
-              self.weights[i][j] -= learning_rate * gradient.weights[i][j];
+              self.weights[i][j] += learning_rate * gradient.weights[i][j];
             }
           }
         }

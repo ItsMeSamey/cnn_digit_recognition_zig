@@ -7,10 +7,12 @@ const MNIST = @import("read_minst.zig");
 
 const cnn = CNN(f64, 28, 28, Loss.MeanSquaredError, [_]Layer.LayerType{
   Layer.getFlattener(),
-  Layer.getDense(64, Activation.Tanh),
-  Layer.getDense(32, Activation.Tanh),
+  Layer.getDense(512, Activation.Tanh),
+  Layer.getDense(256, Activation.ReLU),
+  Layer.getDense(128, Activation.Tanh),
+  Layer.getDense(64, Activation.ReLU),
   Layer.getDense(16, Activation.Sigmoid),
-  Layer.getDense(10, Activation.Normalize),
+  Layer.getDense(10, Activation.NormalizeSquared),
 });
 
 const MNISTIterator = MNIST.GetMinstIterator(28, 28);
@@ -21,18 +23,20 @@ pub fn main() !void {
   var gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
   defer if (gpa.deinit() != .ok) @panic("Memory leak detected!!");
   const allocator = gpa.allocator();
-  var rng = std.Random.DefaultPrng.init(1);
+  var rng = std.Random.DefaultPrng.init(@bitCast(std.time.timestamp()));
 
   var trainer = cnn.Trainer{.layers = undefined};
   const mnist_iterator = try MNISTIterator.init("./datasets/train-images.idx3-ubyte", "./datasets/train-labels.idx1-ubyte", allocator);
   defer mnist_iterator.free(allocator);
 
-  trainer.train(mnist_iterator, .{
-    .verbose = true,
-    .batch_size = 32,
-    .learning_rate = 1,
-    .rng = rng.random(),
-  });
+  for (0..32) |i| {
+    trainer.train(mnist_iterator, .{
+      .verbose = true,
+      .batch_size = @intCast(i + 8),
+      .learning_rate = @as(f64, 1) / @as(f64, @floatFromInt(1 + i)),
+      .rng = rng.random(),
+    });
+  }
 
   var tester = trainer.toTester();
 

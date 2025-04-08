@@ -93,3 +93,44 @@ pub fn Normalize(LEN: comptime_int, F: type) type {
   };
 }
 
+pub fn NormalizeAbsolute(LEN: comptime_int, F: type) type {
+  return struct {
+    pub fn forward(input: *const [LEN]F, output: *[LEN]F) void {
+      var sum: F = 0;
+      inline for (0..LEN) |i| {
+        sum += @abs(input[i]);
+      }
+      inline for (0..LEN) |i| {
+        output[i] = input[i] / sum;
+      }
+    }
+
+    pub fn backward(derivative: *const [LEN]F, cache_in: *const [LEN]F, cache_out: *const [LEN]F, output: *[LEN]F) void {
+      inline for (0..LEN) |i| {
+        output[i] = (cache_out[i] / cache_in[i] - @abs(cache_out[i])) * derivative[i];
+      }
+    }
+  };
+}
+
+pub fn NormalizeSquared(LEN: comptime_int, F: type) type {
+  return struct {
+    pub fn forward(input: *const [LEN]F, output: *[LEN]F) void {
+      var sum: F = 0;
+      inline for (0..LEN) |i| {
+        output[i] = input[i] * input[i];
+        sum += output[i];
+      }
+      inline for (0..LEN) |i| {
+        output[i] /= sum;
+      }
+    }
+
+    pub fn backward(derivative: *const [LEN]F, cache_in: *const [LEN]F, cache_out: *const [LEN]F, output: *[LEN]F) void {
+      inline for (0..LEN) |i| {
+        output[i] = 2 * (cache_out[i] / cache_in[i]) * (1 - cache_out[i]) * derivative[i];
+      }
+    }
+  };
+}
+
