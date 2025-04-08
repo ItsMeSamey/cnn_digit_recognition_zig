@@ -3,9 +3,10 @@ const logger = @import("logger.zig");
 
 /// This function generates a struct that can be used to load minst dataset 
 pub fn GetMinstIterator(comptime ROWS: u32, comptime COLS: u32) type {
+  const alignment = @alignOf([ROWS][COLS]u8);
   return struct {
     // The data in this dataset
-    data: [*]u8,
+    data: [*] align(alignment) u8,
     // Labels in this dataset
     labels: [*]u8,
     // how many images are present in this dataset
@@ -51,7 +52,7 @@ pub fn GetMinstIterator(comptime ROWS: u32, comptime COLS: u32) type {
 
       if (images_header.num_images != labels_header.num_labels) return InitError.IncompatibleFiles;
 
-      const allocation = try allocator.alloc(u8, images_stats.size - 16 + labels_stats.size - 8);
+      const allocation = try allocator.alignedAlloc(u8, alignment, images_stats.size - 16 + labels_stats.size - 8);
       errdefer allocator.free(allocation);
 
       const image_file_read_count = try images_file.readAll(allocation[0..images_stats.size - 16]);
@@ -71,10 +72,12 @@ pub fn GetMinstIterator(comptime ROWS: u32, comptime COLS: u32) type {
       allocator.free(self.data[0..self.count * ROWS * COLS + self.count]);
     }
 
-    pub fn next(self: *@This()) ?struct{
-      image: * align(1) [ROWS][COLS]u8,
+    const NextResult = struct{
+      image: * [ROWS][COLS]u8,
       label: u8,
-    } {
+    };
+
+    pub fn next(self: *@This()) ?NextResult {
       if (self.index >= self.count) return null;
       defer self.index += 1;
       return .{
@@ -89,6 +92,50 @@ pub fn GetMinstIterator(comptime ROWS: u32, comptime COLS: u32) type {
 
     pub fn reset(self: *@This()) void {
       self.index = 0;
+    }
+
+    pub fn shuffle(self: *@This(), rng: std.Random) void {
+      rng.shuffle([ROWS][COLS]u8, );
+
+      var i: u32 = 0;
+      while (i < self.count - 1) : (i += 1) {
+        const j = rng.intRangeLessThan(u32, i, self.count);
+        const darr = @as([*][ROWS][COLS]u8, @ptrCast(self.data));
+        std.mem.swap([ROWS][COLS]u8, &darr[i], &darr[j]);
+        std.mem.swap(u8, &self.labels[i], &self.labels[j]);
+      }
+    }
+
+    const RandomIterator = struct {
+      rng: std.Random,
+      data: [*] align(alignment) u8,
+      labels: [*]u8,
+      count: u32,
+      remaining: u32,
+
+      pub fn next(self: *@This()) ?NextResult {
+        if (self.remaining == 0) return null;
+        self.remaining -= 1;
+        const index = self.rng.intRangeLessThan(u32, 0, self.count);
+        return .{
+          .image = @ptrCast(self.data[index * (ROWS * COLS) ..][0..ROWS * COLS].ptr),
+          .label = self.labels[index],
+        };
+      }
+
+      pub fn hasNext(self: *@This()) bool {
+        return self.remaining != 0;
+      }
+    };
+
+    pub fn randomIterator(self: *@This(), rng: std.Random, count: u32) RandomIterator {
+      return .{
+        .rng = rng,
+        .data = self.data,
+        .labels = self.labels,
+        .count = self.count,
+        .remaining = count,
+      };
     }
   };
 }
