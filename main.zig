@@ -5,13 +5,13 @@ const Activation = @import("functions_activate.zig");
 const Loss = @import("functions_loss.zig");
 const MNIST = @import("read_minst.zig");
 
-const cnn = CNN(f64, 28, 28, Loss.ClosestError, [_]Layer.LayerType{
+const cnn = CNN(f64, 28, 28, Loss.CategoricalCrossentropy, [_]Layer.LayerType{
   Layer.getFlattener(),
   // Layer.getDense(14*14*2, Activation.Tanh),
   Layer.getDense(14*14, Activation.ReLU),
   Layer.getDense(7*7, Activation.Sigmoid),
   Layer.getDense(4*7, Activation.Tanh),
-  Layer.getDense(10, Activation.ReLU),
+  Layer.getDense(10, Activation.Softmax),
 });
 
 const MNISTIterator = MNIST.GetMinstIterator(28, 28);
@@ -28,7 +28,7 @@ pub fn main() !void {
   var mnist_iterator = try MNISTIterator.init("./datasets/train-images.idx3-ubyte", "./datasets/train-labels.idx1-ubyte", allocator);
   defer mnist_iterator.free(allocator);
 
-  for (0..32) |i| {
+  for (0..4) |i| {
     trainer.train(mnist_iterator.randomIterator(rng.random(), mnist_iterator.count*2), .{
       .verbose = true,
       .batch_size = @intCast(i + 32),
