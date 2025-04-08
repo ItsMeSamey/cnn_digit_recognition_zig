@@ -7,7 +7,6 @@ const MNIST = @import("read_minst.zig");
 
 const cnn = CNN(f64, 28, 28, Loss.MeanSquaredError, [_]Layer.LayerType{
   Layer.getFlattener(),
-  Layer.getDense(512, Activation.Tanh),
   Layer.getDense(256, Activation.ReLU),
   Layer.getDense(128, Activation.Tanh),
   Layer.getDense(64, Activation.ReLU),

@@ -187,10 +187,10 @@ pub fn getConvolver(filter_x: comptime_int, filter_y: comptime_int, stride_x: co
         }
 
         pub fn applyGradient(self: *@This(), gradient: *const Gradient, learning_rate: F) void {
-          self.bias += learning_rate * gradient.bias;
-          inline for (0..out_width) |i| {
-            inline for (0..width) |j| {
-              self.filter[i][j] += learning_rate * gradient.filter[i][j];
+          self.bias -= learning_rate * gradient.bias;
+          inline for (0..filter_y) |i| {
+            inline for (0..filter_x) |j| {
+              self.filter[i][j] -= learning_rate * gradient.filter[i][j];
             }
           }
         }
@@ -229,7 +229,7 @@ pub fn getMaxPooling(pool_size_x: comptime_int, pool_size_y: comptime_int, strid
       if (out_height * stride_y < height) out_height += 1;
 
       const Layer = struct {
-        pub const Gradient = void; 
+        pub const Gradient = void;
 
         const idxType = std.meta.Int(.unsigned, std.math.log2(pool_size_y*pool_size_x));
         max_idx: if (in_training) [out_height][out_width]idxType else void = if (in_training) undefined else {},
@@ -507,9 +507,9 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
         pub fn applyGradient(self: *@This(), gradient: *const Gradient, learning_rate: F) void {
           @setEvalBranchQuota(1000_000);
           inline for (0..out_width) |i| {
-            self.biases[i] += learning_rate * gradient.biases[i];
+            self.biases[i] -= learning_rate * gradient.biases[i];
             inline for (0..width) |j| {
-              self.weights[i][j] += learning_rate * gradient.weights[i][j];
+              self.weights[i][j] -= learning_rate * gradient.weights[i][j];
             }
           }
         }
@@ -530,4 +530,3 @@ test getDense {
   try std.testing.expect(Layer.width == 5);
   try std.testing.expect(Layer.height == 1);
 }
-
