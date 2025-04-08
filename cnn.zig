@@ -186,9 +186,9 @@ pub fn CNN(
         inline for (@This().Layers, 0..) |l, i| {
           const name = std.fmt.comptimePrint("{d}", .{i});
           if (l.is_simple) continue;
-          logger.log(&@src(), "Forward input ({s})\n\t{any}\n", .{@typeName(l.layer_type), cache[CacheSizeArray[i]..CacheSizeArray[i+1]]});
+          // logger.log(&@src(), "Forward input ({s})\n\t{any}\n", .{@typeName(l.layer_type), cache[CacheSizeArray[i]..CacheSizeArray[i+1]]});
           @field(self.layers, name).forward(@ptrCast(cache[if (i == 0) 0 else CacheSizeArray[i]..].ptr), @ptrCast(cache[CacheSizeArray[i+1]..].ptr));
-          logger.log(&@src(), "Forward Output ({s})\n\t{any}\n", .{@typeName(l.layer_type), @as(*[l.output_height*l.output_width]F, @ptrCast(cache[CacheSizeArray[i+1]..].ptr))});
+          // logger.log(&@src(), "Forward Output ({s})\n\t{any}\n", .{@typeName(l.layer_type), @as(*[l.output_height*l.output_width]F, @ptrCast(cache[CacheSizeArray[i+1]..].ptr))});
         }
       }
 
@@ -197,6 +197,7 @@ pub fn CNN(
         var d1 = &buf[0];
         var d2 = &buf[1];
         LossFn.backward(cache[CacheSize - OutputWidth..], target, d2[0..OutputWidth]);
+        logger.log(@src(), "predictions: {any}\n", .{cache[CacheSize - OutputWidth..]});
         logger.log(&@src(), "--- dLoss ({d}) ---\n\t{any}\n", .{target, d2[0..OutputWidth]});
 
         inline for (0..@This().Layers.len) |_i| {
