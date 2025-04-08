@@ -17,6 +17,47 @@ pub fn ReLU(LEN: comptime_int, F: type) type {
   };
 }
 
+pub fn getPReLU(alpha: comptime_float) fn (LEN: comptime_int, F: type) type {
+  return struct {
+    pub fn PReLU(LEN: comptime_int, F: type) type {
+      return struct {
+        pub fn forward(input: *const [LEN]F, output: *[LEN]F) void {
+          inline for (0..LEN) |i| {
+            output[i] = if (input[i] < 0) input[i] * @as(F, alpha) else input[i];
+          }
+        }
+
+        pub fn backward(derivative: *const [LEN]F, cache_in: *const [LEN]F, cache_out: *const [LEN]F, output: *[LEN]F) void {
+          _ = cache_out;
+          inline for (0..LEN) |i| {
+            output[i] = if (cache_in[i] < 0) @as(F, alpha) * derivative[i] else derivative[i];
+          }
+        }
+      };
+    }
+  }.PReLU;
+}
+
+pub fn getELU(alpha: comptime_float) fn (LEN: comptime_int, F: type) type {
+  return struct {
+    pub fn ELU(LEN: comptime_int, F: type) type {
+      return struct {
+        pub fn forward(input: *const [LEN]F, output: *[LEN]F) void {
+          inline for (0..LEN) |i| {
+            output[i] = if (input[i] < 0) @as(F, alpha) * (std.math.exp(input[i]) - 1) else input[i];
+          }
+        }
+
+        pub fn backward(derivative: *const [LEN]F, cache_in: *const [LEN]F, cache_out: *const [LEN]F, output: *[LEN]F) void {
+          inline for (0..LEN) |i| {
+            output[i] = if (cache_in[i] < 0) (cache_out[i] + @as(F, alpha)) * derivative[i] else derivative[i];
+          }
+        }
+      };
+    }
+  }.ELU;
+}
+
 pub fn Tanh(LEN: comptime_int, F: type) type {
   return struct {
     pub fn forward(input: *const [LEN]F, output: *[LEN]F) void {
