@@ -417,14 +417,14 @@ test CNN {
 
   var trainer = cnn.Trainer{.layers = undefined};
 
-  var rng = std.Random.DefaultPrng.init(@bitCast(std.time.timestamp()));
+  var rng = std.Random.DefaultPrng.init(0);
   trainer.reset(rng.random());
 
-  for (0..4) |i| {
-    trainer.train(Iterator{.rng = rng.random(), .remaining = 1024, .repetitions = 4}, .{
+  for (0..16) |i| {
+    trainer.train(Iterator{.rng = rng.random(), .remaining = 1024, .repetitions = 0}, .{
       .verbose = true,
-      .batch_size = @intCast(1),
-      .learning_rate = @as(f64, 1e-1) / @as(f64, @floatFromInt(1 + i)),
+      .batch_size = @intCast(16),
+      .learning_rate = @as(f64, 1.4) / @as(f64, @floatFromInt(1 + i)),
     });
   }
 
