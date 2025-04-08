@@ -51,3 +51,49 @@ pub fn MeanAbsoluteError(LEN: comptime_int, F: type) type {
   };
 }
 
+pub fn ClosestError(LEN: comptime_int, F: type) type {
+  return struct {
+    pub fn forward(predictions: *const [LEN]F, target: u8) F {
+      var retval: F = 0;
+      inline for (0..LEN) |i| {
+        if (i == target) {
+          if (predictions[i] < 0) {
+            retval += -2 * predictions[i];
+          } else if (predictions[i] < 1) {
+            retval += 1 - predictions[i];
+          } else {
+            retval += (predictions[i] - 1) / 2;
+          }
+        } else {
+          if (predictions[i] < 0) {
+            retval += -predictions[i] / 2;
+          } else {
+            retval += @exp(predictions[i]);
+          }
+        }
+      }
+      return retval;
+    }
+
+    pub fn backward(predictions: *const [LEN]F, target: u8, output: *[LEN]F) void {
+      inline for (0..LEN) |i| {
+        if (i == target) {
+          if (predictions[i] < 0) {
+            output[i] = -2;
+          } else if (predictions[i] < 1) {
+            output[i] = -1;
+          } else {
+            output[i] = 0.5;
+          }
+        } else {
+          if (predictions[i] < 0) {
+            output[i] = -0.5;
+          } else {
+            output[i] = @exp(predictions[i]);
+          }
+        }
+      }
+    }
+  };
+}
+
