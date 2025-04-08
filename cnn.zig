@@ -197,7 +197,7 @@ pub fn CNN(
         var d1 = &buf[0];
         var d2 = &buf[1];
         LossFn.backward(cache[CacheSize - OutputWidth..], target, d2[0..OutputWidth]);
-        logger.log(@src(), "predictions: {any}\n", .{cache[CacheSize - OutputWidth..]});
+        logger.log(&@src(), "predictions: {any}\n", .{cache[CacheSize - OutputWidth..]});
         logger.log(&@src(), "--- dLoss ({d}) ---\n\t{any}\n", .{target, d2[0..OutputWidth]});
 
         inline for (0..@This().Layers.len) |_i| {
