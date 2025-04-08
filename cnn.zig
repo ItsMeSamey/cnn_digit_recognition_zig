@@ -221,23 +221,25 @@ pub fn CNN(
         }
       }
 
+      pub fn reset(self: *@This(), rng: std.Random) void {
+        const gradients: Gradients = undefined;
+        inline for (0..@This().Layers.len) |i| {
+          const name = std.fmt.comptimePrint("{d}", .{i});
+          if (@TypeOf(@field(gradients.sub, name)) == void) continue;
+          logger.log(&@src(), "Reset {s}\n", .{@typeName(@TypeOf(@field(self.layers, name)))});
+          @field(self.layers, name).reset(rng);
+        }
+      }
+
       pub const Options = struct {
         verbose: bool = true,
         batch_size: u32,
         learning_rate: F,
-        rng: std.Random,
       };
       pub fn train(self: *@This(), iterator_readonly: anytype, options: Options) void {
         var iterator = iterator_readonly;
         var gradients: Gradients = undefined;
         var cache: [CacheSize]F = undefined;
-
-        inline for (0..@This().Layers.len) |i| {
-          const name = std.fmt.comptimePrint("{d}", .{i});
-          logger.log(&@src(), "Reset {s}\n", .{@typeName(@TypeOf(@field(self.layers, name)))});
-          if (@TypeOf(@field(gradients.sub, name)) == void) continue;
-          @field(self.layers, name).reset(options.rng);
-        }
 
         // inline for (0..@This().Layers.len) |i| {
         //   logger.log(&@src(), "Layer {d}\n", .{i});
@@ -360,6 +362,57 @@ pub fn CNN(
 }
 
 test CNN {
-  _ = comptime CNN(f32, 28, 28, [_]Layers.LayerType{Layers.getFlattener()});
+  const Layer = @import("layers.zig");
+  const Activation = @import("functions_activate.zig");
+  const Loss = @import("functions_loss.zig");
+
+  const Iterator = struct {
+    rng: std.Random,
+    remaining: u32,
+    val: [1][3]u8 = undefined,
+
+    fn next(self: *@This()) ?struct {
+      image: *[1][3]u8,
+      label: u8,
+    } {
+      if (!self.hasNext()) return null;
+      self.remaining -= 1;
+      self.val[0][0] = self.rng.intRangeLessThan(u8, 0, 2);
+      self.val[0][1] = self.rng.intRangeLessThan(u8, 0, 2);
+      self.val[0][2] = self.rng.intRangeLessThan(u8, 0, 2);
+      return .{
+        .image = &self.val,
+        .label = (self.val[0][0] ^ self.val[0][1]) + self.val[0][2],
+      };
+    }
+
+    pub fn hasNext(self: *const @This()) bool {
+      return self.remaining > 0;
+    }
+  };
+
+  // xor test
+  const cnn = CNN(f64, 1, 3, Loss.MeanSquaredError, [_]Layer.LayerType{
+    Layer.getDense(9, Activation.Sigmoid),
+    Layer.getDense(6, Activation.Sigmoid),
+    Layer.getDense(3, Activation.Sigmoid),
+  });
+
+  var trainer = cnn.Trainer{.layers = undefined};
+
+  var rng = std.Random.DefaultPrng.init(@bitCast(std.time.timestamp()));
+  trainer.reset(rng.random());
+
+  for (0..4) |i| {
+    trainer.train(Iterator{.rng = rng.random(), .remaining = 1024}, .{
+      .verbose = true,
+      .batch_size = @intCast(i + 32),
+      .learning_rate = @as(f64, 0.01) / @as(f64, @floatFromInt(1 + i)),
+    });
+  }
+
+  var tester = trainer.toTester();
+  const accuracy = tester.@"test"(Iterator{.rng = rng.random(), .remaining = 2048});
+  std.debug.print("\n>> Final Accuracy: {d:.3}%\n", .{accuracy*100});
 }
 
