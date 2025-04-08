@@ -1,6 +1,33 @@
 const std = @import("std");
 const logger = @import("logger.zig");
 
+fn CopyPtrAttrs(
+  comptime source: type,
+  comptime size: std.builtin.Type.Pointer.Size,
+  comptime child: type,
+) type {
+  const info = @typeInfo(source).pointer;
+  return @Type(.{
+    .pointer = .{
+      .size = size,
+      .is_const = info.is_const,
+      .is_volatile = info.is_volatile,
+      .is_allowzero = info.is_allowzero,
+      .alignment = info.alignment,
+      .address_space = info.address_space,
+      .child = child,
+      .sentinel_ptr = null,
+    },
+  });
+}
+
+fn AsBytesReturnType(comptime P: type) type {
+  const pointer = @typeInfo(P).pointer;
+  std.debug.assert(pointer.size == .one);
+  const size = @sizeOf(pointer.child);
+  return CopyPtrAttrs(P, .one, [size]u8);
+}
+
 pub const LayerType = fn (F: type, in_training: bool, width: comptime_int, height: comptime_int) LayerOutputType;
 pub const LayerOutputType = struct {
   width: comptime_int,
@@ -37,7 +64,6 @@ pub fn getConvolver(filter_x: comptime_int, filter_y: comptime_int, stride_x: co
       if (out_width * stride_x < width) out_width += 1;
       comptime var out_height = (height - filter_y) / stride_y + 1;
       if (out_height * stride_y < height) out_height += 1;
-      const as_byte_size = (filter_x * filter_y + 1) * @sizeOf(F);
 
       const Gradient = struct {
         filter: [filter_y][filter_x]F,
@@ -90,21 +116,15 @@ pub fn getConvolver(filter_x: comptime_int, filter_y: comptime_int, stride_x: co
           }
         }
 
-        pub fn asBytes(self: *@This()) [as_byte_size]u8 {
-          var bytes: [as_byte_size]u8 = undefined;
-          @memcpy(bytes[0..filter_x * filter_y * @sizeOf(F)], std.mem.asBytes(&self.filter));
-          @memcpy(bytes[filter_x * filter_y * @sizeOf(F)..], std.mem.asBytes(&self.bias));
-          return bytes;
+        pub fn asBytes(self: *const @This()) AsBytesReturnType(*const @This()) {
+          return std.mem.asBytes(self);
         }
 
-        pub fn fromBytes(bytes: *[as_byte_size]u8) @This() {
-          var self = @This().init();
-          @memcpy(std.mem.asBytes(&self.filter), bytes[0..filter_x * filter_y * @sizeOf(F)]);
-          @memcpy(std.mem.asBytes(&self.bias), bytes[filter_x * filter_y * @sizeOf(F)..]);
-          return self;
+        pub fn fromBytes(bytes: AsBytesReturnType(*const @This())) @This() {
+          return std.mem.bytesAsValue(@This(), bytes).*;
         }
 
-        pub fn forward(self: *@This(), input: *[height][width]F, output: *[out_height][out_width]F) void {
+        pub fn forward(self: *const @This(), input: *[height][width]F, output: *[out_height][out_width]F) void {
           inline for (0..out_height) |out_y| {
             inline for (0..out_width) |out_x| {
               var sum: F = self.bias;
@@ -221,15 +241,15 @@ pub fn getMaxPooling(pool_size_x: comptime_int, pool_size_y: comptime_int, strid
         pub fn reset(_: *@This(), _: std.Random) void {
           // Nothing to reset
         }
-        pub fn asBytes(_: *@This()) [0]u8 {
-          return [0]u8{}; // Nothing to save
+        pub fn asBytes(_: *const @This()) null {
+          return null; // Nothing to save
         }
 
-        pub fn fromBytes(_: [0]u8) @This() {
+        pub fn fromBytes(_: null) @This() {
           return .{}; // Nothing to restore
         }
 
-        pub fn forward(self: *@This(), input: *[height][width]F, output: *[out_height][out_width]F) void {
+        pub fn forward(self: *const @This(), input: *[height][width]F, output: *[out_height][out_width]F) void {
           inline for (0..out_height) |out_y| {
             inline for (0..out_width) |out_x| {
               var max_val = -std.math.inf(F);
@@ -370,8 +390,6 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
       std.debug.assert(height == 1);
       const Activate = function_getter(out_width, F);
 
-      const as_byte_size = (width + 1) * out_width * @sizeOf(F);
-
       const Layer = struct {
         pub const Gradient = struct {
           weights: [out_width][width]F,
@@ -425,21 +443,15 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
           }
         }
 
-        pub fn asBytes(self: *@This()) [as_byte_size]u8 {
-          var bytes: [as_byte_size]u8 = undefined;
-          @memcpy(bytes[0..width * out_width * @sizeOf(F)], std.mem.asBytes(&self.weights));
-          @memcpy(bytes[width * out_width * @sizeOf(F)..], std.mem.asBytes(&self.biases));
-          return bytes;
+        pub fn asBytes(self: *const @This()) AsBytesReturnType(*const @This()) {
+          return std.mem.asBytes(self);
         }
 
-        pub fn fromBytes(bytes: *[as_byte_size]u8) @This() {
-          var self = @This().init();
-          @memcpy(std.mem.asBytes(&self.weights), bytes[0..width * out_width * @sizeOf(F)]);
-          @memcpy(std.mem.asBytes(&self.biases), bytes[width * out_width * @sizeOf(F)..]);
-          return self;
+        pub fn fromBytes(bytes: AsBytesReturnType(*const @This())) @This() {
+          return std.mem.bytesAsValue(@This(), bytes).*;
         }
 
-        pub fn forward(self: *@This(), input: *[1][width]F, output: *[1][out_width]F) void {
+        pub fn forward(self: *const @This(), input: *[1][width]F, output: *[1][out_width]F) void {
           @setEvalBranchQuota(1000_000);
           inline for (0..out_width) |i| {
             var sum: F = self.biases[i];

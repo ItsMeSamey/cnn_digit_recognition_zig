@@ -21,7 +21,7 @@ pub fn main() !void {
   var gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
   defer if (gpa.deinit() != .ok) @panic("Memory leak detected!!");
   const allocator = gpa.allocator();
-  var rng = std.Random.DefaultPrng.init(0);
+  var rng = std.Random.DefaultPrng.init(1);
 
   var trainer = cnn.Trainer{.layers = undefined};
   const mnist_iterator = try MNISTIterator.init("./datasets/train-images.idx3-ubyte", "./datasets/train-labels.idx1-ubyte", allocator);
@@ -33,5 +33,14 @@ pub fn main() !void {
     .learning_rate = 1,
     .rng = rng.random(),
   });
+
+  var tester = trainer.toTester();
+
+  const mnist_test_iterator = try MNISTIterator.init("./datasets/t10k-images.idx3-ubyte", "./datasets/t10k-labels.idx1-ubyte", allocator);
+  defer mnist_test_iterator.free(allocator);
+
+  const loss = tester.@"test"(mnist_test_iterator, true);
+  std.debug.print("\n>>Final Loss: {d:.3}\n", .{loss});
+
 }
 

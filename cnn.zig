@@ -69,6 +69,7 @@ pub fn CNN(
     }
 
     pub const OutputWidth = Trainer.Layers[Trainer.Layers.len - 1].output_width;
+    const LossFn = loss_gen(OutputWidth, F);
 
     fn getLayerInputDims(layer_num: comptime_int) [2]comptime_int {
       if (layer_num == 0) return .{height, width};
@@ -149,7 +150,8 @@ pub fn CNN(
         var retval: Tester = undefined;
         inline for (0..layers.len) |i| {
           const name = std.fmt.comptimePrint("{d}", .{i});
-          @field(retval, name) = @TypeOf(@field(retval, name)).fromBytes(@field(self, name).toBytes());
+          if (@This().Layers[i].is_simple) continue;
+          @field(retval.layers, name) = @TypeOf(@field(retval.layers, name)).fromBytes(@field(self.layers, name).asBytes());
         }
         return retval;
       }
@@ -190,7 +192,6 @@ pub fn CNN(
         }
       }
 
-      const LossFn = loss_gen(OutputWidth, F);
       pub fn backward(self: *@This(), cache: *[CacheSize]F, target: u8, gradients: *Gradients) void {
         var buf: [2][MaxLayerSize]F = undefined;
         var d1 = &buf[0];
@@ -294,32 +295,51 @@ pub fn CNN(
         var retval: Trainer = undefined;
         inline for (0..layers.len) |i| {
           const name = std.fmt.comptimePrint("{d}", .{i});
-          @field(retval, name) = @TypeOf(@field(retval, name)).fromBytes(@field(self, name).toBytes());
+          if (@This().Layers[i].is_simple) continue;
+          @field(retval.layers, name) = @TypeOf(@field(retval.layers, name)).fromBytes(@field(self.layers, name).asBytes());
         }
         return retval;
       }
 
-      pub fn forward(self: *@This(), input: [height][width]u8) [OutputWidth]F {
+      pub fn forward(self: *const @This(), input: [height][width]u8) [OutputWidth]F {
         var buf: [2][MaxLayerSize]F = undefined;
         var p1 = &buf[0];
         var p2 = &buf[1];
 
         inline for (input, 0..) |row, i| {
           inline for (row, 0..) |val, j| {
-            @as([height][width]F, @ptrCast(p1))[i][j] = @as(F, @floatFromInt(val)) / @as(F, 255);
+            @as(*[height][width]F, @ptrCast(p1))[i][j] = @as(F, @floatFromInt(val)) / @as(F, 255);
           }
         }
 
         inline for (@This().Layers, 0..) |l, i| {
           const name = std.fmt.comptimePrint("{d}", .{i});
-          if (@typeInfo(l.return_type) == .pointer) continue;
+          if (l.is_simple) continue;
           @field(self.layers, name).forward(@ptrCast(p1), @ptrCast(p2));
           const temp = p1;
           p1 = p2;
           p2 = temp;
         }
 
-        return p1[0..OutputWidth];
+        return p1[0..OutputWidth].*;
+      }
+
+      pub fn @"test"(self: *const @This(), iterator_ro: anytype, verbose: bool) F {
+        var retval: F = 0;
+        var i: usize = 0;
+        var iterator = iterator_ro;
+        while (iterator.next()) |next| {
+          i += 1;
+          const predictions = self.forward(next.image.*);
+          const loss = LossFn.forward(&predictions, next.label);
+          retval += loss;
+
+          if (verbose) {
+            logger.writer.print("{d:5} Loss({d}) = {d:.3}\n", .{i, next.label, loss*100}) catch {};
+          }
+        }
+
+        return retval / @as(F, @floatFromInt(i));
       }
     };
 
