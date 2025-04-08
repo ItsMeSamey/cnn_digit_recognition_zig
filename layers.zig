@@ -461,6 +461,8 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
 
         pub fn forward(self: if (in_training) *@This() else *const @This(), input: *[1][width]F, output: *[1][out_width]F) void {
           @setEvalBranchQuota(1000_000);
+          logger.log(&@src(), "inp: {d}\n", .{input});
+          defer logger.log(&@src(), "out: {d}\n", .{output});
           for (0..out_width) |i| {
             var sum: F = self.biases[i];
             for (0..width) |j| {
@@ -493,11 +495,7 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
           logger.log(&@src(), "d_next: {any}\n", .{d_next});
           logger.log(&@src(), "cache: {any}\n", .{cache_out});
           var biases: [out_width]F = undefined;
-          if (@TypeOf(self.cache_in) == void) {
-            Activate.backward(&d_next[0], {}, &cache_out[0], &biases);
-          } else {
-            Activate.backward(&d_next[0], &self.cache_in, &cache_out[0], &biases);
-          }
+          Activate.backward(&d_next[0], if (@TypeOf(self.cache_in) == void) {} else &self.cache_in, &cache_out[0], &biases);
           // logger.log(&@src(), "D ({s})\n{any}\n", .{@typeName(@This()), gradient.biases});
 
           // Gradient with respect to weights
@@ -547,3 +545,4 @@ test getDense {
   try std.testing.expect(Layer.width == 5);
   try std.testing.expect(Layer.height == 1);
 }
+

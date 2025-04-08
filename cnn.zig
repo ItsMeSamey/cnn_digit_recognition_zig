@@ -197,7 +197,7 @@ pub fn CNN(
         var d1 = &buf[0];
         var d2 = &buf[1];
         LossFn.backward(cache[CacheSize - OutputWidth..], target, d2[0..OutputWidth]);
-        logger.log(&@src(), "predictions: {any}\n", .{cache[CacheSize - OutputWidth..]});
+        logger.log(&@src(), "predictions: {d}\n", .{cache[CacheSize - OutputWidth..]});
         logger.log(&@src(), "--- dLoss ({d}) ---\n\t{any}\n", .{target, d2[0..OutputWidth]});
 
         inline for (0..@This().Layers.len) |_i| {
@@ -212,7 +212,7 @@ pub fn CNN(
             @ptrCast(d1),
             @ptrCast(d2),
             &@field(gradients.sub, name),
-            i == 0,
+            i != 0,
           );
 
           const temp = d1;
@@ -222,10 +222,12 @@ pub fn CNN(
       }
 
       pub fn reset(self: *@This(), rng: std.Random) void {
-        const gradients: Gradients = undefined;
         inline for (0..@This().Layers.len) |i| {
           const name = std.fmt.comptimePrint("{d}", .{i});
-          if (@TypeOf(@field(gradients.sub, name)) == void) continue;
+          if (@sizeOf(@TypeOf(@field(self.layers, name))) == 0) {
+            logger.log(&@src(), "Skipped {s}\n", .{@typeName(@TypeOf(@field(self.layers, name)))});
+            continue;
+          }
           logger.log(&@src(), "Reset {s}\n", .{@typeName(@TypeOf(@field(self.layers, name)))});
           @field(self.layers, name).reset(rng);
         }
@@ -270,7 +272,7 @@ pub fn CNN(
           }
 
           if (!options.verbose) {
-            logger.writer.print("Step: {d:4}-{d:2} Loss: {d:.3}\n", .{step, i, gross_loss*100}) catch {};
+            logger.writer.print("Step: {d:4}-(1-{d:2}) Loss: {d:.3}\n", .{step, i, gross_loss*100}) catch {};
           }
 
           self.applyGradients(&gradients, options.learning_rate / @as(F, @floatFromInt(options.batch_size)));
@@ -283,7 +285,12 @@ pub fn CNN(
       pub fn applyGradients(self: *@This(), gradients: *Gradients, learning_rate: F) void {
         inline for (0..@This().Layers.len) |i| {
           const name = std.fmt.comptimePrint("{d}", .{i});
-          if (@TypeOf(@field(gradients.sub, name)) == void) continue;
+          if (@TypeOf(@field(gradients.sub, name)) == void) {
+            // logger.log(&@src(), "Skipped: {s}", .{@typeName(@TypeOf(@field(gradients.sub, name)))});
+            continue;
+          } else {
+            // logger.log(&@src(), "Applying Gradients to {s}\n", .{@typeName(@TypeOf(@field(gradients.sub, name)))});
+          }
           // logger.writer.print("Applying Gradients to {s}\n", .{@typeName(@TypeOf(@field(gradients.sub, name)))}) catch {};
           @field(self.layers, name).applyGradient(&@field(gradients.sub, name), learning_rate);
         }
@@ -312,7 +319,7 @@ pub fn CNN(
 
         inline for (input, 0..) |row, i| {
           inline for (row, 0..) |val, j| {
-            @as(*[height][width]F, @ptrCast(p1))[i][j] = @as(F, @floatFromInt(val)) / @as(F, 255);
+            @as(*[height][width]F, @ptrCast(p1))[i][j] = @as(F, @floatFromInt(val));
           }
         }
 
@@ -370,16 +377,25 @@ test CNN {
     rng: std.Random,
     remaining: u32,
     val: [1][3]u8 = undefined,
+    repetitions: u32,
+    remaining_repetitions: u32 = 0,
 
     fn next(self: *@This()) ?struct {
       image: *[1][3]u8,
       label: u8,
     } {
-      if (!self.hasNext()) return null;
-      self.remaining -= 1;
-      self.val[0][0] = self.rng.intRangeLessThan(u8, 0, 2);
-      self.val[0][1] = self.rng.intRangeLessThan(u8, 0, 2);
-      self.val[0][2] = self.rng.intRangeLessThan(u8, 0, 2);
+      if (self.remaining_repetitions > 0) {
+        self.remaining_repetitions -= 1;
+      } else if (self.remaining > 0) {
+        self.remaining -= 1;
+        self.remaining_repetitions = self.repetitions;
+        self.val[0][0] = self.rng.intRangeLessThan(u8, 0, 2);
+        self.val[0][1] = self.rng.intRangeLessThan(u8, 0, 2);
+        self.val[0][2] = self.rng.intRangeLessThan(u8, 0, 2);
+      } else {
+        return null;
+      }
+
       return .{
         .image = &self.val,
         .label = (self.val[0][0] ^ self.val[0][1]) + self.val[0][2],
@@ -387,15 +403,16 @@ test CNN {
     }
 
     pub fn hasNext(self: *const @This()) bool {
-      return self.remaining > 0;
+      return self.remaining_repetitions > 0 or self.remaining > 0;
     }
   };
 
   // xor test
-  const cnn = CNN(f64, 1, 3, Loss.CategoricalCrossentropy, [_]Layer.LayerType{
-    Layer.getDense(9, Activation.Sigmoid),
-    Layer.getDense(6, Activation.Sigmoid),
-    Layer.getDense(3, Activation.Softmax),
+  const cnn = CNN(f64, 1, 3, Loss.MeanSquaredError, [_]Layer.LayerType{
+    Layer.getDense(9, Activation.getPReLU(0.1)),
+    Layer.getDense(9, Activation.getPReLU(0.1)),
+    Layer.getDense(6, Activation.getPReLU(0.1)),
+    Layer.getDense(3, Activation.NormalizeSquared),
   });
 
   var trainer = cnn.Trainer{.layers = undefined};
@@ -404,15 +421,15 @@ test CNN {
   trainer.reset(rng.random());
 
   for (0..4) |i| {
-    trainer.train(Iterator{.rng = rng.random(), .remaining = 1024}, .{
+    trainer.train(Iterator{.rng = rng.random(), .remaining = 1024, .repetitions = 4}, .{
       .verbose = true,
-      .batch_size = @intCast(i + 32),
-      .learning_rate = @as(f64, 0.1) / @as(f64, @floatFromInt(1 + i)),
+      .batch_size = @intCast(1),
+      .learning_rate = @as(f64, 1e-1) / @as(f64, @floatFromInt(1 + i)),
     });
   }
 
   var tester = trainer.toTester();
-  const accuracy = tester.@"test"(Iterator{.rng = rng.random(), .remaining = 512});
+  const accuracy = tester.@"test"(Iterator{.rng = rng.random(), .remaining = 512, .repetitions = 0});
   std.debug.print("\n>> Final Accuracy: {d:.3}%\n", .{accuracy*100});
 }
 
