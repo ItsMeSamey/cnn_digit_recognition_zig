@@ -325,6 +325,7 @@ pub fn CNN(
       }
 
       pub fn @"test"(self: *const @This(), iterator_ro: anytype, verbose: bool) F {
+        defer logger.buffered.flush() catch {};
         var retval: F = 0;
         var i: usize = 0;
         var iterator = iterator_ro;
@@ -335,8 +336,10 @@ pub fn CNN(
           retval += loss;
 
           if (verbose) {
-            logger.writer.print("{d:5} Loss({d}) = {d:.3}\n", .{i, next.label, loss*100}) catch {};
+            logger.writer.print(">> Predictions: {any}", .{predictions}) catch {};
           }
+          logger.writer.print("{d:5} Loss({d}) = {d:.3}\n", .{i, next.label, loss*100}) catch {};
+          if (verbose) logger.writer.print("<<\n", .{}) catch {};
         }
 
         return retval / @as(F, @floatFromInt(i));

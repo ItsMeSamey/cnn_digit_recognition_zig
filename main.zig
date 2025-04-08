@@ -39,8 +39,7 @@ pub fn main() !void {
   const mnist_test_iterator = try MNISTIterator.init("./datasets/t10k-images.idx3-ubyte", "./datasets/t10k-labels.idx1-ubyte", allocator);
   defer mnist_test_iterator.free(allocator);
 
-  const loss = tester.@"test"(mnist_test_iterator, true);
-  std.debug.print("\n>>Final Loss: {d:.3}\n", .{loss});
-
+  const loss = tester.@"test"(mnist_test_iterator, false);
+  std.debug.print("\n>>Final Loss: {d:.3}\n", .{loss*100});
 }
 
