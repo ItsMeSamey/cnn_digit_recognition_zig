@@ -18,6 +18,7 @@ pub fn ReLU(LEN: comptime_int, F: type) type {
 }
 
 pub fn getPReLU(alpha: comptime_float) fn (LEN: comptime_int, F: type) type {
+  std.debug.assert(alpha != 1);
   return struct {
     pub fn PReLU(LEN: comptime_int, F: type) type {
       return struct {

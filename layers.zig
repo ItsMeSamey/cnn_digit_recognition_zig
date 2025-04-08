@@ -78,8 +78,8 @@ pub fn getConvolver(filter_x: comptime_int, filter_y: comptime_int, stride_x: co
 
         pub fn reset(self: *@This()) void {
           self.bias = 0;
-          inline for (0..filter_y) |i| {
-            inline for (0..filter_x) |j| {
+          for (0..filter_y) |i| {
+            for (0..filter_x) |j| {
               self[i][j] = 0;
             }
           }
@@ -87,8 +87,8 @@ pub fn getConvolver(filter_x: comptime_int, filter_y: comptime_int, stride_x: co
 
         pub fn add(self: *@This(), other: *const @This()) void {
           self.bias += other.bias;
-          inline for (0..filter_y) |i| {
-            inline for (0..filter_x) |j| {
+          for (0..filter_y) |i| {
+            for (0..filter_x) |j| {
               self[i][j] += other[i][j];
             }
           }
@@ -109,8 +109,8 @@ pub fn getConvolver(filter_x: comptime_int, filter_y: comptime_int, stride_x: co
 
         pub fn reset(self: *@This(), rng: std.Random) void {
           self.bias = rng.float(F) - 0.5;
-          inline for (0..filter_x) |i| {
-            inline for (0..filter_y) |j| {
+          for (0..filter_x) |i| {
+            for (0..filter_y) |j| {
               self.filter[i][j] = rng.float(F)*10 - 5;
             }
           }
@@ -125,11 +125,11 @@ pub fn getConvolver(filter_x: comptime_int, filter_y: comptime_int, stride_x: co
         }
 
         pub fn forward(self: *const @This(), input: *[height][width]F, output: *[out_height][out_width]F) void {
-          inline for (0..out_height) |out_y| {
-            inline for (0..out_width) |out_x| {
+          for (0..out_height) |out_y| {
+            for (0..out_width) |out_x| {
               var sum: F = self.bias;
-              inline for (0..filter_y) |filter_y_offset| {
-                inline for (0..filter_x) |filter_x_offset| {
+              for (0..filter_y) |filter_y_offset| {
+                for (0..filter_x) |filter_x_offset| {
                   const in_y = out_y * stride_y + filter_y_offset;
                   const in_x = out_x * stride_x + filter_x_offset;
                   if (comptime in_y >= height and in_x >= width) continue;
@@ -154,22 +154,22 @@ pub fn getConvolver(filter_x: comptime_int, filter_y: comptime_int, stride_x: co
           gradient.reset();
 
           // Gradient with respect to the bias
-          inline for (0..out_height) |out_y| {
-            inline for (0..out_width) |out_x| {
+          for (0..out_height) |out_y| {
+            for (0..out_width) |out_x| {
               gradient.bias += d_next[out_y][out_x];
             }
           }
 
-          inline for (0..height) |y| {
-            inline for (0..width) |x| {
+          for (0..height) |y| {
+            for (0..width) |x| {
               d_prev[y][x] = 0;
             }
           }
 
-          inline for (0..out_height) |out_y| {
-            inline for (0..out_width) |out_x| {
-              inline for (0..filter_y) |filter_y_offset| {
-                inline for (0..filter_x) |filter_x_offset| {
+          for (0..out_height) |out_y| {
+            for (0..out_width) |out_x| {
+              for (0..filter_y) |filter_y_offset| {
+                for (0..filter_x) |filter_x_offset| {
                   const in_y = out_y * stride_y + filter_y_offset;
                   const in_x = out_x * stride_x + filter_x_offset;
                   if (comptime in_y >= height and in_x >= width) continue;
@@ -188,8 +188,8 @@ pub fn getConvolver(filter_x: comptime_int, filter_y: comptime_int, stride_x: co
 
         pub fn applyGradient(self: *@This(), gradient: *const Gradient, learning_rate: F) void {
           self.bias -= learning_rate * gradient.bias;
-          inline for (0..filter_y) |i| {
-            inline for (0..filter_x) |j| {
+          for (0..filter_y) |i| {
+            for (0..filter_x) |j| {
               self.filter[i][j] -= learning_rate * gradient.filter[i][j];
             }
           }
@@ -250,12 +250,12 @@ pub fn getMaxPooling(pool_size_x: comptime_int, pool_size_y: comptime_int, strid
         }
 
         pub fn forward(self: *const @This(), input: *[height][width]F, output: *[out_height][out_width]F) void {
-          inline for (0..out_height) |out_y| {
-            inline for (0..out_width) |out_x| {
+          for (0..out_height) |out_y| {
+            for (0..out_width) |out_x| {
               var max_val = -std.math.inf(F);
               var max_index: if (in_training) idxType else void = if (in_training) undefined else {};
-              inline for (0..pool_size_y) |pool_y| {
-                inline for (0..pool_size_x) |pool_x| {
+              for (0..pool_size_y) |pool_y| {
+                for (0..pool_size_x) |pool_x| {
                   const in_y = out_y * stride_y + pool_y;
                   const in_x = out_x * stride_x + pool_x;
                   if (comptime in_y >= height and in_x >= width) continue;
@@ -292,14 +292,14 @@ pub fn getMaxPooling(pool_size_x: comptime_int, pool_size_y: comptime_int, strid
 
           if (!calc_prev) return;
 
-          inline for (0..height) |y| {
-            inline for (0..width) |x| {
+          for (0..height) |y| {
+            for (0..width) |x| {
               d_prev[y][x] = 0;
             }
           }
 
-          inline for (0..out_height) |out_y| {
-            inline for (0..out_width) |out_x| {
+          for (0..out_height) |out_y| {
+            for (0..out_width) |out_x| {
               const max_index = self.max_idx[out_y][out_x];
               const prev_y = out_y * stride_y + @divTrunc(max_index, pool_size_x);
               const prev_x = out_x * stride_x + @rem(max_index, pool_size_x);
@@ -404,9 +404,9 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
 
           pub fn reset(self: *@This()) void {
             @setEvalBranchQuota(1000_000);
-            inline for (0..out_width) |i| {
+            for (0..out_width) |i| {
               self.biases[i] = 0;
-              inline for (0..width) |j| {
+              for (0..width) |j| {
                 self.weights[i][j] = 0;
               }
             }
@@ -414,9 +414,9 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
 
           pub fn add(self: *@This(), other: *const @This()) void {
             @setEvalBranchQuota(1000_000);
-            inline for (0..out_width) |i| {
+            for (0..out_width) |i| {
               self.biases[i] += other.biases[i];
-              inline for (0..width) |j| {
+              for (0..width) |j| {
                 self.weights[i][j] += other.weights[i][j];
               }
             }
@@ -435,9 +435,9 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
 
         pub fn reset(self: *@This(), rng: std.Random) void {
           @setEvalBranchQuota(1000_000);
-          inline for (0..out_width) |i| {
+          for (0..out_width) |i| {
             self.biases[i] = rng.float(F) - 0.5;
-            inline for (0..width) |j| {
+            for (0..width) |j| {
               self.weights[i][j] = rng.float(F) - 0.5;
             }
           }
@@ -453,9 +453,9 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
 
         pub fn forward(self: *const @This(), input: *[1][width]F, output: *[1][out_width]F) void {
           @setEvalBranchQuota(1000_000);
-          inline for (0..out_width) |i| {
+          for (0..out_width) |i| {
             var sum: F = self.biases[i];
-            inline for (0..width) |j| {
+            for (0..width) |j| {
               sum += input[0][j] * self.weights[i][j];
             }
             output[0][i] = sum;
@@ -484,9 +484,9 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
           // logger.log(&@src(), "D ({s})\n{any}\n", .{@typeName(@This()), gradient.biases});
 
           // Gradient with respect to weights
-          inline for (0..out_width) |i| {
+          for (0..out_width) |i| {
             gradient.biases[i] += biases[i];
-            inline for (0..width) |j| {
+            for (0..width) |j| {
               gradient.weights[i][j] = biases[i] * cache_in[0][j];
             }
           }
@@ -494,9 +494,9 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
           if (!calc_prev) return;
 
           // Gradient with respect to the input (d_prev)
-          inline for (0..width) |j| {
+          for (0..width) |j| {
             d_prev[0][j] = 0;
-            inline for (0..out_width) |i| {
+            for (0..out_width) |i| {
               d_prev[0][j] += gradient.biases[i] * self.weights[i][j];
             }
           }
@@ -506,9 +506,9 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
 
         pub fn applyGradient(self: *@This(), gradient: *const Gradient, learning_rate: F) void {
           @setEvalBranchQuota(1000_000);
-          inline for (0..out_width) |i| {
+          for (0..out_width) |i| {
             self.biases[i] -= learning_rate * gradient.biases[i];
-            inline for (0..width) |j| {
+            for (0..width) |j| {
               self.weights[i][j] -= learning_rate * gradient.weights[i][j];
             }
           }
