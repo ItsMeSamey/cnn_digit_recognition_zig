@@ -392,10 +392,10 @@ test CNN {
   };
 
   // xor test
-  const cnn = CNN(f64, 1, 3, Loss.MeanSquaredError, [_]Layer.LayerType{
+  const cnn = CNN(f64, 1, 3, Loss.CategoricalCrossentropy, [_]Layer.LayerType{
     Layer.getDense(9, Activation.Sigmoid),
     Layer.getDense(6, Activation.Sigmoid),
-    Layer.getDense(3, Activation.Sigmoid),
+    Layer.getDense(3, Activation.Softmax),
   });
 
   var trainer = cnn.Trainer{.layers = undefined};
@@ -407,12 +407,12 @@ test CNN {
     trainer.train(Iterator{.rng = rng.random(), .remaining = 1024}, .{
       .verbose = true,
       .batch_size = @intCast(i + 32),
-      .learning_rate = @as(f64, 0.01) / @as(f64, @floatFromInt(1 + i)),
+      .learning_rate = @as(f64, 0.1) / @as(f64, @floatFromInt(1 + i)),
     });
   }
 
   var tester = trainer.toTester();
-  const accuracy = tester.@"test"(Iterator{.rng = rng.random(), .remaining = 2048});
+  const accuracy = tester.@"test"(Iterator{.rng = rng.random(), .remaining = 512});
   std.debug.print("\n>> Final Accuracy: {d:.3}%\n", .{accuracy*100});
 }
 

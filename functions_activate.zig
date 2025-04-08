@@ -9,7 +9,7 @@ pub fn ReLU(LEN: comptime_int, F: type) type {
       }
     }
 
-    pub fn backward(derivative: *const [LEN]F, cache_in: *const [LEN]F, cache_out: *const [LEN]F, output: *[LEN]F) void {
+    pub fn backward(derivative: *const [LEN]F, comptime cache_in: void, cache_out: *const [LEN]F, output: *[LEN]F) void {
       @setEvalBranchQuota(1000_000);
       _ = cache_in;
       inline for (0..LEN) |i| {
@@ -31,11 +31,19 @@ pub fn getPReLU(alpha: comptime_float) fn (LEN: comptime_int, F: type) type {
           }
         }
 
-        pub fn backward(derivative: *const [LEN]F, cache_in: *const [LEN]F, cache_out: *const [LEN]F, output: *[LEN]F) void {
+        pub fn backward(
+          derivative: *const [LEN]F,
+          cache_in: if (alpha < 0) *const [LEN]F else void,
+          cache_out: *const [LEN]F,
+          output: *[LEN]F
+        ) void {
           @setEvalBranchQuota(1000_000);
-          _ = cache_out;
           inline for (0..LEN) |i| {
-            output[i] = if (cache_in[i] < 0) @as(F, alpha) * derivative[i] else derivative[i];
+            if (alpha < 0) {
+              output[i] = if (cache_in[i] < 0) @as(F, alpha) * derivative[i] else derivative[i];
+            } else {
+              output[i] = if (cache_out[i] < 0) @as(F, alpha) * derivative[i] else derivative[i];
+            }
           }
         }
       };
@@ -74,7 +82,7 @@ pub fn Tanh(LEN: comptime_int, F: type) type {
       }
     }
 
-    pub fn backward(derivative: *const [LEN]F, cache_in: *const [LEN]F, cache_out: *const [LEN]F, output: *[LEN]F) void {
+    pub fn backward(derivative: *const [LEN]F, cache_in: void, cache_out: *const [LEN]F, output: *[LEN]F) void {
       @setEvalBranchQuota(1000_000);
       _ = cache_in;
       inline for (0..LEN) |i| {
@@ -93,7 +101,7 @@ pub fn Sigmoid(LEN: comptime_int, F: type) type {
       }
     }
 
-    pub fn backward(derivative: *const [LEN]F, cache_in: *const [LEN]F, cache_out: *const [LEN]F, output: *[LEN]F) void {
+    pub fn backward(derivative: *const [LEN]F, cache_in: void, cache_out: *const [LEN]F, output: *[LEN]F) void {
       @setEvalBranchQuota(1000_000);
       _ = cache_in;
       inline for (0..LEN) |i| {
@@ -117,7 +125,7 @@ pub fn Softmax(LEN: comptime_int, F: type) type {
       }
     }
 
-    pub fn backward(derivative: *const [LEN]F, cache_in: *const [LEN]F, cache_out: *const [LEN]F, output: *[LEN]F) void {
+    pub fn backward(derivative: *const [LEN]F, cache_in: void, cache_out: *const [LEN]F, output: *[LEN]F) void {
       @setEvalBranchQuota(1000_000);
       _ = cache_in;
       inline for (0..LEN) |i| {

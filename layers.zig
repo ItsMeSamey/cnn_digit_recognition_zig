@@ -391,6 +391,10 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
       const Activate = function_getter(out_width, F);
 
       const Layer = struct {
+        weights: [out_width][width]F,
+        biases: [out_width]F,
+        cache_in: if (!in_training or @typeInfo(@TypeOf(Activate.backward)).@"fn".params[1].type.? == void) void else [out_width]F = undefined,
+
         pub const Gradient = struct {
           weights: [out_width][width]F,
           biases: [out_width]F,
@@ -423,9 +427,6 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
           }
         };
 
-        weights: [out_width][width]F,
-        biases: [out_width]F,
-
         pub fn init() @This() {
           return .{
             .weights = undefined,
@@ -443,23 +444,35 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
           }
         }
 
-        pub fn asBytes(self: *const @This()) AsBytesReturnType(*const @This()) {
-          return std.mem.asBytes(self);
+        const as_bytes_len = out_width * (width + 1) * @sizeOf(F);
+        pub fn asBytes(self: *const @This()) [as_bytes_len]u8 {
+          var retval: [as_bytes_len]u8 = undefined;
+          @memcpy(retval[0..width*out_width*@sizeOf(F)], std.mem.asBytes(&self.weights));
+          @memcpy(retval[width*out_width*@sizeOf(F)..], std.mem.asBytes(&self.biases));
+          return retval;
         }
 
-        pub fn fromBytes(bytes: AsBytesReturnType(*const @This())) @This() {
-          return std.mem.bytesAsValue(@This(), bytes).*;
+        pub fn fromBytes(bytes: [as_bytes_len]u8) @This() {
+          var self: @This() = undefined;
+          @memcpy(std.mem.asBytes(&self.weights), bytes[0..width*out_width*@sizeOf(F)]);
+          @memcpy(std.mem.asBytes(&self.biases), bytes[width*out_width*@sizeOf(F)..]);
+          return self;
         }
 
-        pub fn forward(self: *const @This(), input: *[1][width]F, output: *[1][out_width]F) void {
+        pub fn forward(self: if (in_training) *@This() else *const @This(), input: *[1][width]F, output: *[1][out_width]F) void {
           @setEvalBranchQuota(1000_000);
           for (0..out_width) |i| {
             var sum: F = self.biases[i];
             for (0..width) |j| {
               sum += input[0][j] * self.weights[i][j];
             }
-            output[0][i] = sum;
-            Activate.forward(&output[0], &output[0]);
+            if (@TypeOf(self.cache_in) == void) {
+              output[0][i] = sum;
+              Activate.forward(&output[0], &output[0]);
+            } else {
+              self.cache_in[i] = sum;
+              Activate.forward(&self.cache_in, &output[0]);
+            }
           }
         }
 
@@ -480,14 +493,18 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
           logger.log(&@src(), "d_next: {any}\n", .{d_next});
           logger.log(&@src(), "cache: {any}\n", .{cache_out});
           var biases: [out_width]F = undefined;
-          Activate.backward(@ptrCast(d_next), @ptrCast(cache_in), @ptrCast(cache_out), &biases);
+          if (@TypeOf(self.cache_in) == void) {
+            Activate.backward(&d_next[0], {}, &cache_out[0], &biases);
+          } else {
+            Activate.backward(&d_next[0], &self.cache_in, &cache_out[0], &biases);
+          }
           // logger.log(&@src(), "D ({s})\n{any}\n", .{@typeName(@This()), gradient.biases});
 
           // Gradient with respect to weights
           for (0..out_width) |i| {
             gradient.biases[i] += biases[i];
             for (0..width) |j| {
-              gradient.weights[i][j] = biases[i] * cache_in[0][j];
+              gradient.weights[i][j] += biases[i] * cache_in[0][j];
             }
           }
 
@@ -497,7 +514,7 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
           for (0..width) |j| {
             d_prev[0][j] = 0;
             for (0..out_width) |i| {
-              d_prev[0][j] += gradient.biases[i] * self.weights[i][j];
+              d_prev[0][j] += biases[i] * self.weights[i][j];
             }
           }
 
