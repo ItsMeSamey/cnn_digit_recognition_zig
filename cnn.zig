@@ -282,6 +282,7 @@ pub fn CNN(
         inline for (0..@This().Layers.len) |i| {
           const name = std.fmt.comptimePrint("{d}", .{i});
           if (@TypeOf(@field(gradients.sub, name)) == void) continue;
+          // logger.writer.print("Applying Gradients to {s}\n", .{@typeName(@TypeOf(@field(gradients.sub, name)))}) catch {};
           @field(self.layers, name).applyGradient(&@field(gradients.sub, name), learning_rate);
         }
       }
@@ -325,25 +326,24 @@ pub fn CNN(
         return p1[0..OutputWidth].*;
       }
 
-      pub fn @"test"(self: *const @This(), iterator_ro: anytype, verbose: bool) F {
+      pub fn @"test"(self: *const @This(), iterator_ro: anytype) F {
         defer logger.buffered.flush() catch {};
-        var retval: F = 0;
-        var i: usize = 0;
+        var retval: usize = 0;
+        var n: usize = 0;
         var iterator = iterator_ro;
         while (iterator.next()) |next| {
-          i += 1;
+          n += 1;
           const predictions = self.forward(next.image.*);
-          const loss = LossFn.forward(&predictions, next.label);
-          retval += loss;
-
-          if (verbose) {
-            logger.writer.print(">> Predictions: {any}", .{predictions}) catch {};
+          var guess: usize = 0;
+          inline for (0..predictions.len) |i| {
+            if (predictions[guess] < predictions[i]) guess = i;
           }
-          logger.writer.print("{d:5} Loss({d}) = {d:.3}\n", .{i, next.label, loss*100}) catch {};
-          if (verbose) logger.writer.print("<<\n", .{}) catch {};
+          if (guess == next.label) retval += 1;
+
+          logger.writer.print("{d:5} Prediction({d}) = {d}\n", .{n, next.label, guess}) catch {};
         }
 
-        return retval / @as(F, @floatFromInt(i));
+        return @as(F, @floatFromInt(retval)) / @as(F, @floatFromInt(n));
       }
     };
 
