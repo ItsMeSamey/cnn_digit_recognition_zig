@@ -69,13 +69,6 @@ pub fn getConvolver(filter_x: comptime_int, filter_y: comptime_int, stride_x: co
         filter: [filter_y][filter_x]F,
         bias: F,
 
-        pub fn init() @This() {
-          return .{
-            .filter = undefined,
-            .bias = undefined,
-          };
-        }
-
         pub fn reset(self: *@This()) void {
           self.bias = 0;
           for (0..filter_y) |i| {
@@ -211,7 +204,6 @@ test getConvolver {
   try std.testing.expect(Layer.width == 16);
   try std.testing.expect(Layer.height == 17);
 }
-
 
 
 pub fn getMaxPooling(pool_size_x: comptime_int, pool_size_y: comptime_int, stride_x: comptime_int, stride_y: comptime_int) LayerType {
@@ -382,6 +374,7 @@ test getFlattener {
   try std.testing.expect(Layer.height == 1);
 }
 
+
 pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, T: type) type) LayerType {
   @setEvalBranchQuota(1000_000);
 
@@ -398,13 +391,6 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
         pub const Gradient = struct {
           weights: [out_width][width]F,
           biases: [out_width]F,
-
-          pub fn init() @This() {
-            return .{
-              .weights = undefined,
-              .biases = undefined,
-            };
-          }
 
           pub fn reset(self: *@This()) void {
             @setEvalBranchQuota(1000_000);
@@ -426,13 +412,6 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
             }
           }
         };
-
-        pub fn init() @This() {
-          return .{
-            .weights = undefined,
-            .biases = undefined,
-          };
-        }
 
         pub fn reset(self: *@This(), rng: std.Random) void {
           @setEvalBranchQuota(1000_000);
@@ -544,5 +523,317 @@ test getDense {
   const Layer = LayerFn(f32, true, 1, 10);
   try std.testing.expect(Layer.width == 5);
   try std.testing.expect(Layer.height == 1);
+}
+
+pub fn mergeArray(layers: anytype) LayerType {
+  if (@typeInfo(@TypeOf(layers)) != .array or @typeInfo(@TypeOf(layers)).array.child != LayerType) {
+    @compileError("Expected an array of LayerType, got " ++ @typeName(@TypeOf(layers)) ++ " instead");
+  }
+
+  const LayerProperties = struct {
+    output_height: comptime_int,
+    output_width: comptime_int,
+    layer_type: type,
+
+    need_gradient: bool,
+    gradient_type: type,
+    is_simple: bool,
+
+    fn fromLayerType(layer_output: LayerType, F: type, in_training: bool, h_in: comptime_int, w_in: comptime_int) @This() {
+      const result = layer_output(F, in_training, h_in, w_in);
+      const is_simple = @TypeOf(result.layer.forward) == fn (input: *[h_in][w_in]F) *[result.height][result.width]F;
+      const gradient_type = if (is_simple) void else result.layer.Gradient;
+
+      return .{
+        .output_height = result.height,
+        .output_width = result.width,
+        .layer_type = result.layer,
+        .need_gradient = !(is_simple or @sizeOf(gradient_type) == 0),
+        .gradient_type = gradient_type,
+        .is_simple = is_simple,
+      };
+    }
+
+    fn translateAll(F: type, in_training: bool, h_in: comptime_int, w_in: comptime_int) []const @This() {
+      comptime var translated_layers: []const @This() = &.{};
+      inline for (layers) |layer| {
+        translated_layers = translated_layers ++ &[_]@This(){@This().fromLayerType(
+          F,
+          layer,
+          if (translated_layers.len != 0) translated_layers[translated_layers.len - 1].output_height else h_in,
+          if (translated_layers.len != 0) translated_layers[translated_layers.len - 1].output_width else w_in,
+          in_training
+        )};
+      }
+      return translated_layers;
+    }
+  };
+
+  return struct {
+    pub fn getLayer(F: type, in_training: bool, height: comptime_int, width: comptime_int) LayerOutputType {
+      const LayerOperations = struct {
+        fn getType(L: []const LayerProperties) type {
+          comptime var fields: []const std.builtin.Type.StructField = &.{};
+          inline for (L, 0..) |l, i| {
+            fields = fields ++ &[1]std.builtin.Type.StructField{.{
+              .name = std.fmt.comptimePrint("{d}", .{i}),
+              .type = l.layer_type,
+              .default_value_ptr = null,
+              .is_comptime = false,
+              .alignment = @alignOf(l.layer_type),
+            }};
+          }
+          return @Type(.{
+            .@"struct" = .{
+              .layout = .auto,
+              .fields = fields,
+              .decls = &[_]std.builtin.Type.Declaration{},
+              .is_tuple = false,
+            }
+          });
+        }
+
+        const Layers = LayerProperties.translateAll(F, in_training, height, width);
+        const LayerInstanceType = getType(Layers);
+
+        fn getLayerInputDims(layer_num: comptime_int) [2]comptime_int {
+          if (layer_num == 0) return .{height, width};
+          const layer = Layers[layer_num - 1];
+          return .{layer.output_height, layer.output_width};
+        }
+
+        const AsBytesTypes = init: {
+          var fields: []const std.builtin.Type.StructField = &.{};
+          for (Layers, 0..) |l, i| {
+            const byte_returntype = if (@sizeOf(l.layer_type) == 0) void else @typeInfo(l.layer_type.asBytes).@"fn".return_type.?;
+            fields = fields ++ &[_]std.builtin.Type.StructField{.{
+              .name = std.fmt.comptimePrint("{d}", .{i}),
+              .type = byte_returntype,
+              .default_value_ptr = null,
+              .is_comptime = false,
+              .alignment = @alignOf(byte_returntype),
+            }};
+          }
+
+          break :init @Type(.{
+            .@"struct" = .{
+              .layout = .auto,
+              .fields = fields,
+              .decls = &[_]std.builtin.Type.Declaration{},
+              .is_tuple = false,
+            }
+          });
+        };
+
+        fn getOutputOffsets() [@This().Layers.len]comptime_int {
+          comptime var retval: [@This().Layers.len]comptime_int = undefined;
+          retval[0] = 0;
+          inline for (1..Layers.len) |i| {
+            const l = Layers[i];
+            retval[i] = retval[i-1] + if (l.is_simple) 0 else l.output_height * l.output_width;
+          }
+          return retval;
+        }
+      };
+
+      const GradientsType = struct {
+        sub: SubType,
+
+        const SubType = init: {
+          var fields: []const std.builtin.Type.StructField = &.{};
+          for (LayerOperations.Layers, 0..) |l, i| {
+            const gradient_type = if (l.need_gradient) l.gradient_type else void;
+            fields = fields ++ &[1]std.builtin.Type.StructField{.{
+              .name = std.fmt.comptimePrint("{d}", .{i}),
+              .type = gradient_type,
+              .default_value_ptr = null,
+              .is_comptime = false,
+              .alignment = @alignOf(gradient_type),
+            }};
+          }
+
+          break :init @Type(.{
+            .@"struct" = .{
+              .layout = .auto,
+              .fields = fields,
+              .decls = &[_]std.builtin.Type.Declaration{},
+              .is_tuple = false,
+            }
+          });
+        };
+
+        fn reset(self: *@This()) void {
+          inline for (LayerOperations.Layers, 0..) |l, i| {
+            if (l.need_gradient) @field(self.sub, std.fmt.comptimePrint("{d}", .{i})).reset();
+          }
+        }
+
+        fn add(self: *@This(), other: *@This()) void {
+          inline for (LayerOperations.Layers, 0..) |l, i| {
+            const name = std.fmt.comptimePrint("{d}", .{i});
+            if (l.need_gradient) @field(self.sub, name).add(&@field(other.sub, name));
+          }
+        }
+
+        pub fn format(value: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+          _ = fmt;
+          _ = options;
+          inline for (LayerOperations.Layers, 0..) |l, i| {
+            try std.fmt.format(writer, "\n-------- {s} --------\n{any}\n", .{@typeName(l.layer_type), @field(value.sub, std.fmt.comptimePrint("{d}", .{i}))});
+          }
+        }
+      };
+
+      const Retval = struct {
+        cache: if (!in_training) void else [CacheSize]F = undefined,
+
+        pub const InputHeight = LayerOperations.getLayerInput(0)[0];
+        pub const InputWidth = LayerOperations.getLayerInput(0)[1];
+
+        pub const OutputWidth = LayerOperations.Layers[LayerOperations.Layers.len - 1].output_width;
+        pub const OutputHeight = LayerOperations.Layers[LayerOperations.Layers.len - 1].output_height;
+
+        const CacheSizeArray = LayerOperations.getOutputOffsets();
+        const CacheSize = CacheSizeArray[CacheSizeArray.len - 1];
+
+        // The size of the largest array that is ever allocated as input/output of any layer
+        pub const MaxLayerSize = std.mem.max(comptime_int, &CacheSizeArray);
+
+        pub const Gradient = GradientsType;
+
+        pub fn reset(self: *@This(), rng: std.Random) void {
+          inline for (0..@This().Layers.len) |i| {
+            const name = std.fmt.comptimePrint("{d}", .{i});
+            if (@sizeOf(@TypeOf(@field(self.layers, name))) == 0) {
+              // logger.log(&@src(), "Skipped {s}\n", .{@typeName(@TypeOf(@field(self.layers, name)))});
+              continue;
+            }
+            // logger.log(&@src(), "Reset {s}\n", .{@typeName(@TypeOf(@field(self.layers, name)))});
+            @field(self.layers, name).reset(rng);
+          }
+        }
+
+        pub fn asBytes(self: *const @This()) LayerOperations.AsBytesTypes {
+          var retval: LayerOperations.AsBytesTypes = undefined;
+          inline for (@typeInfo(LayerOperations.Layers).@"struct".fields) |l| {
+            if (l.type == void) continue;
+            @field(retval, l.name) = @field(self.layers, l.name).asBytes();
+          }
+          return retval;
+        }
+
+        pub fn fromBytes(bytes: LayerOperations.AsBytesTypes) @This() {
+          var self: @This() = undefined;
+          inline for (@typeInfo(LayerOperations.Layers).@"struct".fields) |l| {
+            if (l.type == void) continue;
+            @field(self.layers, l.name) = @field(bytes, l.name).fromBytes();
+          }
+          return self;
+        }
+
+        pub fn forward(
+          self: if (in_training) *@This() else *const @This(),
+          input: *[InputHeight][InputWidth]F,
+          output: *[OutputHeight][OutputWidth]F
+        ) void {
+          @setEvalBranchQuota(1000_000);
+
+          if (in_training) {
+            inline for (@This().Layers, 0..) |l, i| {
+              const name = std.fmt.comptimePrint("{d}", .{i});
+              if (l.is_simple) continue;
+              @field(self.layers, name).forward(
+                if (i == 0) input else @ptrCast(self.cache[CacheSizeArray[i - 1]..].ptr),
+                if (i == LayerOperations.Layers.len - 1) output else @ptrCast(self.cache[CacheSizeArray[i]..].ptr),
+              );
+            }
+          } else {
+            var buf: [2][MaxLayerSize]F = undefined;
+            var p1 = &buf[0];
+            var p2 = &buf[1];
+
+            inline for (LayerOperations.TestingLayers, 0..) |l, i| {
+              if (l.is_simple) continue;
+              const name = std.fmt.comptimePrint("{d}", .{i});
+              @field(self.layers, name).forward(
+                if (i == 0) input else p1,
+                if (i == LayerOperations.Layers.len - 1) output else p2,
+              );
+              std.mem.swap(@TypeOf(p1), &p1, &p2);
+            }
+          }
+        }
+
+        pub fn backward(
+          self: *@This(),
+          cache_in: *const [InputHeight][InputWidth]F,
+          cache_out: *const [OutputHeight][OutputWidth]F,
+          d_prev: *[InputHeight][InputWidth]F,
+          d_next: *const [OutputHeight][OutputWidth]F,
+          gradient: *Gradient,
+          comptime calc_prev: bool,
+        ) void {
+          @setEvalBranchQuota(1000_000);
+          if (!in_training) @compileError("Cant call " ++ @typeName(@This()) ++ ".backward() when not in_training");
+
+          var buf: [2][MaxLayerSize]F = undefined;
+          var d1 = &buf[0];
+          var d2 = &buf[1];
+
+          inline for (LayerOperations.Layers, 0..) |l, i| {
+            if (l.is_simple) continue;
+            @field(self.layers, l.name).backward(
+              if (i == 0) cache_in else @ptrCast(self.cache[CacheSizeArray[i - 1]..].ptr),
+              if (i == LayerOperations.Layers.len - 1) cache_out else @ptrCast(self.cache[CacheSizeArray[i]..].ptr),
+              if (i == 0) d_prev else d1,
+              if (i == LayerOperations.Layers.len - 1) d_next else d2,
+              if (l.need_gradient) &@field(gradient.sub, l.name) else void,
+              if (i == 0) calc_prev else true,
+            );
+            std.mem.swap(@TypeOf(d1), &d1, &d2);
+          }
+        }
+
+        pub fn applyGradient(self: *@This(), gradients: *const Gradient, learning_rate: F) void {
+          inline for (0..@This().Layers.len) |i| {
+            const name = std.fmt.comptimePrint("{d}", .{i});
+            if (@TypeOf(@field(gradients.sub, name)) == void) {
+              // logger.log(&@src(), "Skipped: {s}", .{@typeName(@TypeOf(@field(gradients.sub, name)))});
+              continue;
+            } else {
+              // logger.log(&@src(), "Applying Gradients to {s}\n", .{@typeName(@TypeOf(@field(gradients.sub, name)))});
+            }
+            // logger.writer.print("Applying Gradients to {s}\n", .{@typeName(@TypeOf(@field(gradients.sub, name)))}) catch {};
+            @field(self.layers, name).applyGradient(&@field(gradients.sub, name), learning_rate);
+          }
+        }
+      };
+
+      std.debug.assert(height == Retval.OutputHeight);
+      std.debug.assert(width == Retval.OutputWidth);
+
+      return .{
+        .width = Retval.OutputWidth,
+        .height = Retval.OutputHeight,
+        .layer = Retval,
+      };
+    }
+  }.getLayer;
+}
+
+
+pub fn mergeTuple(layers_tuple: anytype) LayerType {
+  const layers_tuple_typeinfo = @typeInfo(@TypeOf(layers_tuple));
+  if (layers_tuple_typeinfo != .@"struct" or !layers_tuple_typeinfo.@"struct".is_tuple) {
+    @compileError("Expected a tuple of layers");
+  }
+
+  const layers_tuple_fields = layers_tuple_typeinfo.@"struct".fields;
+  inline for (layers_tuple_fields) |layer_field| {
+    if (@typeInfo(layer_field.type) != .array and layer_field.type == [@field(layers_tuple, layer_field.name).len]LayerType) continue;
+    @compileError("Field type must be an array of `LayerType`, but " ++ layer_field.name ++ " is " ++ @typeName(layer_field.type));
+  }
+
+  @compileError("Not implemented");
 }
 
