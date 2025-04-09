@@ -50,7 +50,12 @@ pub const LayerOutputType = struct {
   layer:  type
 };
 
-pub fn getConvolver(filter_x: comptime_int, filter_y: comptime_int, stride_x: comptime_int, stride_y: comptime_int) LayerType {
+
+pub fn getConvolver(
+  filter_x: comptime_int, filter_y: comptime_int,
+  stride_x: comptime_int, stride_y: comptime_int,
+  function_getter: fn(LEN: comptime_int, T: type) type
+) LayerType {
   @setEvalBranchQuota(1000_000);
   std.debug.assert(filter_x >= 1);
   std.debug.assert(filter_y >= 1);
@@ -64,34 +69,35 @@ pub fn getConvolver(filter_x: comptime_int, filter_y: comptime_int, stride_x: co
       comptime var out_height = (height - filter_y) / stride_y + 1;
       if (out_height * stride_y < height) out_height += 1;
 
-      const Gradient = struct {
-        filter: [filter_y][filter_x]F,
-        bias: F,
-
-        pub fn reset(self: *@This()) void {
-          self.bias = 0;
-          for (0..filter_y) |i| {
-            for (0..filter_x) |j| {
-              self[i][j] = 0;
-            }
-          }
-        }
-
-        pub fn add(self: *@This(), other: *const @This()) void {
-          self.bias += other.bias;
-          for (0..filter_y) |i| {
-            for (0..filter_x) |j| {
-              self[i][j] += other[i][j];
-            }
-          }
-        }
-      };
+      const Activate = function_getter(out_height * out_width, F);
 
       const Layer = struct {
         filter: [filter_y][filter_x]F,
         bias: F,
-        // input: if (in_training) *[width*height]F else void = if (in_training) undefined else {},
-        // output: if (in_training) [width*height]F else void = if (in_training) undefined else {},
+        cache_in: if (!in_training or @typeInfo(@TypeOf(Activate.backward)).@"fn".params[1].type.? == void) void else [out_width]F = undefined,
+
+        const Gradient = struct {
+          filter: [filter_y][filter_x]F,
+          bias: F,
+
+          pub fn reset(self: *@This()) void {
+            self.bias = 0;
+            for (0..filter_y) |i| {
+              for (0..filter_x) |j| {
+                self.filter[i][j] = 0;
+              }
+            }
+          }
+
+          pub fn add(self: *@This(), other: *const @This()) void {
+            self.bias += other.bias;
+            for (0..filter_y) |i| {
+              for (0..filter_x) |j| {
+                self.filter[i][j] += other.filter[i][j];
+              }
+            }
+          }
+        };
 
         pub fn reset(self: *@This(), rng: std.Random) void {
           self.bias = rng.float(F) - 0.5;
@@ -114,17 +120,25 @@ pub fn getConvolver(filter_x: comptime_int, filter_y: comptime_int, stride_x: co
           for (0..out_height) |out_y| {
             for (0..out_width) |out_x| {
               var sum: F = self.bias;
-              for (0..filter_y) |filter_y_offset| {
-                for (0..filter_x) |filter_x_offset| {
+              inline for (0..filter_y) |filter_y_offset| {
+                inline for (0..filter_x) |filter_x_offset| {
                   const in_y = out_y * stride_y + filter_y_offset;
                   const in_x = out_x * stride_x + filter_x_offset;
-                  if (in_y >= height and in_x >= width) continue;
-                  sum += input[in_y][in_x] * self.filter[filter_y_offset][filter_x_offset];
+                  if (!(in_y >= height and in_x >= width)) {
+                    sum += input[in_y][in_x] * self.filter[filter_y_offset][filter_x_offset];
+                  }
                 }
               }
-              output[out_y][out_x] = sum;
+
+              if (@TypeOf(self.cache_in) == void) {
+                output[out_y][out_x] = sum;
+              } else {
+                self.cache_in[out_y][out_x] = sum;
+              }
             }
           }
+
+          Activate.forward(@ptrCast(if (@TypeOf(self.cache_in) == void) output else &self.cache_in), @ptrCast(output));
         }
 
         pub fn backward(
@@ -133,49 +147,53 @@ pub fn getConvolver(filter_x: comptime_int, filter_y: comptime_int, stride_x: co
           cache_out: *const [out_height][out_width]F,
           d_prev: *[height][width]F,
           d_next: *const [out_height][out_width]F,
-        ) Gradient {
+          gradient: *Gradient,
+          comptime calc_prev: bool,
+        ) void {
           if (!in_training) @compileError("Cant call " ++ @typeName(@This()) ++ ".backward() when not in_training");
-          _ = cache_out;
-          var gradient: Gradient = undefined;
-          gradient.reset();
 
+          var dbuf: [out_height][out_width]F = undefined;
+          Activate.backward(@ptrCast(d_next), if (@TypeOf(self.cache_in) == void) {} else @ptrCast(&self.cache_in), @ptrCast(cache_out), @ptrCast(&dbuf));
           // Gradient with respect to the bias
-          for (0..out_height) |out_y| {
-            for (0..out_width) |out_x| {
-              gradient.bias += d_next[out_y][out_x];
+          inline for (0..out_height) |out_y| {
+            inline for (0..out_width) |out_x| {
+              gradient.bias += dbuf[out_y][out_x];
             }
           }
 
-          for (0..height) |y| {
-            for (0..width) |x| {
-              d_prev[y][x] = 0;
-            }
-          }
-
-          for (0..out_height) |out_y| {
-            for (0..out_width) |out_x| {
-              for (0..filter_y) |filter_y_offset| {
-                for (0..filter_x) |filter_x_offset| {
-                  const in_y = out_y * stride_y + filter_y_offset;
-                  const in_x = out_x * stride_x + filter_x_offset;
-                  if (in_y >= height and in_x >= width) continue;
-                  // Gradient with respect to the filter
-                  gradient.filter[filter_y_offset][filter_x_offset] += d_next[out_y][out_x] * cache_in[in_y][in_x];
-
-                  // Gradient with respect to the input (d_prev)
-                  d_prev[in_y][in_x] += d_next[out_y][out_x] * self.filter[filter_y_offset][filter_x_offset];
-                }
+          if (calc_prev) {
+            for (0..height) |y| {
+              for (0..width) |x| {
+                d_prev[y][x] = 0;
               }
             }
           }
 
-          return gradient;
+          for (0..out_height) |out_y| {
+            for (0..out_width) |out_x| {
+              inline for (0..filter_y) |filter_y_offset| {
+                inline for (0..filter_x) |filter_x_offset| {
+                  const in_y = out_y * stride_y + filter_y_offset;
+                  const in_x = out_x * stride_x + filter_x_offset;
+                  if (!(in_y >= height and in_x >= width)) {
+                    // Gradient with respect to the filter
+                    gradient.filter[filter_y_offset][filter_x_offset] += d_next[out_y][out_x] * cache_in[in_y][in_x];
+
+                    // Gradient with respect to the input (d_prev)
+                    if (calc_prev) {
+                      d_prev[in_y][in_x] += d_next[out_y][out_x] * self.filter[filter_y_offset][filter_x_offset];
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
 
         pub fn applyGradient(self: *@This(), gradient: *const Gradient, learning_rate: F) void {
           self.bias -= learning_rate * gradient.bias;
-          for (0..filter_y) |i| {
-            for (0..filter_x) |j| {
+          inline for (0..filter_y) |i| {
+            inline for (0..filter_x) |j| {
               self.filter[i][j] -= learning_rate * gradient.filter[i][j];
             }
           }
@@ -239,12 +257,12 @@ pub fn getMaxPooling(pool_size_x: comptime_int, pool_size_y: comptime_int, strid
                 for (0..pool_size_x) |pool_x| {
                   const in_y = out_y * stride_y + pool_y;
                   const in_x = out_x * stride_x + pool_x;
-                  if (in_y >= height and in_x >= width) continue;
-
-                  if (input[in_y][in_x] > max_val) {
-                    max_val = input[in_y][in_x];
-                    if (in_training) {
-                      max_index = @as(idxType, pool_y * pool_size_x + pool_x);
+                  if (!(in_y >= height and in_x >= width)) {
+                    if (input[in_y][in_x] > max_val) {
+                      max_val = input[in_y][in_x];
+                      if (in_training) {
+                        max_index = @as(idxType, pool_y * pool_size_x + pool_x);
+                      }
                     }
                   }
                 }
@@ -334,7 +352,9 @@ pub fn getReshaper(out_height: comptime_int, out_width: comptime_int) LayerType 
   @setEvalBranchQuota(1000_000);
   return struct {
     pub fn getLayer(F: type, in_training: bool, height: comptime_int, width: comptime_int) LayerOutputType {
-      std.debug.assert(height*width == out_height*out_width);
+      if (comptime height*width != out_height*out_width) {
+        @compileError(std.fmt.comptimePrint("Cant reshape to {d}x{d} from {d}x{d}", .{ out_height, out_width, height, width }));
+      }
 
       const Layer = struct {
         pub fn forward(input: *[height][width]F) *[out_height][out_width]F {
@@ -737,7 +757,7 @@ pub fn mergeArray(layers: anytype) LayerType {
         pub fn asBytes(self: *const @This()) LayerOperations.AsBytesTypes {
           var retval: LayerOperations.AsBytesTypes = undefined;
           inline for (@typeInfo(LayerOperations.LayerInstanceType).@"struct".fields) |l| {
-            if (l.type == void) continue;
+            if (@sizeOf(l.type) == 0) continue;
             @field(retval, l.name) = @field(self.layers, l.name).asBytes();
           }
           return retval;
@@ -746,7 +766,7 @@ pub fn mergeArray(layers: anytype) LayerType {
         pub fn fromBytes(bytes: LayerOperations.AsBytesTypes) @This() {
           var self: @This() = undefined;
           inline for (@typeInfo(LayerOperations.LayerInstanceType).@"struct".fields) |l| {
-            if (l.type == void) continue;
+            if (@sizeOf(l.type) == 0) continue;
             @field(self.layers, l.name) = @TypeOf(@field(self.layers, l.name)).fromBytes(@field(bytes, l.name));
           }
           return self;
@@ -811,7 +831,7 @@ pub fn mergeArray(layers: anytype) LayerType {
               if (_i == 0) cache_out else @ptrCast(self.cache[CacheSizeArray[i]..].ptr),
               if (i == 0) d_prev else @ptrCast(d1),
               if (_i == 0) d_next else @ptrCast(d2),
-              if (l.need_gradient) &@field(gradient.sub, name) else .{},
+              if (l.need_gradient) &@field(gradient.sub, name) else undefined,
               if (i == 0) calc_prev else true,
             );
             std.mem.swap(@TypeOf(d1), &d1, &d2);
@@ -896,17 +916,18 @@ pub fn mergeAny(layers: anytype) LayerType {
     pub fn getLayer(F: type, in_training: bool, height: comptime_int, width: comptime_int) LayerOutputType {
       const LOPS = GetLOPS(init: {
         var gotten: [layer_fields.len]LayerType = undefined;
-        for (layer_fields, 0..) |l, i| gotten[i] = mergeAny(l.type);
+        for (layer_fields, 0..) |l, i| gotten[i] = mergeAny(@field(layers, l.name));
         break :init gotten;
       }, F, in_training, height, width, .tuple);
       const LayerOperations = LOPS.LayerOperations;
 
       const CacheSizeArray: [LayerOperations.Layers.len + 1]comptime_int = init: {
         var retval: [LayerOperations.Layers.len + 1]comptime_int = undefined;
+        const offsets = LayerOperations.getInputOffsets();
+        for (offsets, 0..) |o, i| retval[i] = o;
+
         const last = LayerOperations.Layers[LayerOperations.Layers.len-1];
-        retval[LayerOperations.Layers.len] = last.output_height * last.output_width;
-        const offsets = LayerOperations.getOutputOffsets();
-        for (offsets[0..offsets.len-1], 0..) |o, i| retval[i] = o;
+        retval[LayerOperations.Layers.len] = retval[LayerOperations.Layers.len-1] + last.output_height * last.output_width;
         break :init retval;
       };
 
@@ -914,6 +935,7 @@ pub fn mergeAny(layers: anytype) LayerType {
       const OutputWidth = CacheSizeArray[CacheSizeArray.len - 1];
 
       const Retval = struct {
+        layers: LayerOperations.LayerInstanceType,
         pub const Gradient = LOPS.Gradient;
         // pub const Layers = LayerOperations.Layers;
 
@@ -932,7 +954,7 @@ pub fn mergeAny(layers: anytype) LayerType {
         pub fn asBytes(self: *const @This()) LayerOperations.AsBytesTypes {
           var retval: LayerOperations.AsBytesTypes = undefined;
           inline for (@typeInfo(LayerOperations.LayerInstanceType).@"struct".fields) |l| {
-            if (l.type == void) continue;
+            if (@sizeOf(l.type) == 0) continue;
             @field(retval, l.name) = @field(self.layers, l.name).asBytes();
           }
           return retval;
@@ -941,7 +963,7 @@ pub fn mergeAny(layers: anytype) LayerType {
         pub fn fromBytes(bytes: LayerOperations.AsBytesTypes) @This() {
           var self: @This() = undefined;
           inline for (@typeInfo(LayerOperations.LayerInstanceType).@"struct".fields) |l| {
-            if (l.type == void) continue;
+            if (@sizeOf(l.type) == 0) continue;
             @field(self.layers, l.name) = @TypeOf(@field(self.layers, l.name)).fromBytes(@field(bytes, l.name));
           }
           return self;
@@ -955,7 +977,8 @@ pub fn mergeAny(layers: anytype) LayerType {
           @setEvalBranchQuota(1000_000);
           inline for (LayerOperations.Layers, 0..) |l, i| {
             if (l.is_simple) continue;
-            @field(self.layers, l.name).forward(input, @ptrCast(output[1][CacheSizeArray[i]..].ptr));
+            const name = std.fmt.comptimePrint("{d}", .{i});
+            @field(self.layers, name).forward(input, @ptrCast(output[0][CacheSizeArray[i]..].ptr));
           }
         }
 
@@ -982,12 +1005,14 @@ pub fn mergeAny(layers: anytype) LayerType {
           var d_buf: if (calc_prev) [height][width]F else void = undefined;
           inline for (LayerOperations.Layers, 0..) |l, i| {
             if (l.is_simple) continue;
-            @field(self.layers, l.name).backward(
-              cache_in, @ptrCast(cache_out[1][CacheSizeArray[i]..].ptr),
-              if (calc_prev) &d_buf else undefined, @ptrCast(d_next[1][CacheSizeArray[i]..].ptr),
-              if (l.need_gradient) &@field(gradient.sub, l.name) else .{},
+            const name = std.fmt.comptimePrint("{d}", .{i});
+            @field(self.layers, name).backward(
+              cache_in, @ptrCast(cache_out[0][CacheSizeArray[i]..].ptr),
+              if (calc_prev) &d_buf else undefined, @ptrCast(d_next[0][CacheSizeArray[i]..].ptr),
+              if (l.need_gradient) &@field(gradient.sub, name) else .{},
               calc_prev,
             );
+
             if (calc_prev) {
               for (0..height) |y| {
                 for (0..width) |x| {
