@@ -124,7 +124,7 @@ pub fn getConvolver(
                 inline for (0..filter_x) |filter_x_offset| {
                   const in_y = out_y * stride_y + filter_y_offset;
                   const in_x = out_x * stride_x + filter_x_offset;
-                  if (!(in_y >= height and in_x >= width)) {
+                  if (in_y < height and in_x < width) {
                     sum += input[in_y][in_x] * self.filter[filter_y_offset][filter_x_offset];
                   }
                 }
@@ -175,7 +175,7 @@ pub fn getConvolver(
                 inline for (0..filter_x) |filter_x_offset| {
                   const in_y = out_y * stride_y + filter_y_offset;
                   const in_x = out_x * stride_x + filter_x_offset;
-                  if (!(in_y >= height and in_x >= width)) {
+                  if (in_y < height and in_x < width) {
                     // Gradient with respect to the filter
                     gradient.filter[filter_y_offset][filter_x_offset] += d_next[out_y][out_x] * cache_in[in_y][in_x];
 
@@ -226,10 +226,8 @@ pub fn getMaxPooling(pool_size_x: comptime_int, pool_size_y: comptime_int, strid
 
   return struct {
     pub fn getLayer(F: type, in_training: bool, height: comptime_int, width: comptime_int) LayerOutputType {
-      comptime var out_width = (width - pool_size_x) / stride_x + 1;
-      if (out_width * stride_x < width) out_width += 1;
-      comptime var out_height = (height - pool_size_y) / stride_y + 1;
-      if (out_height * stride_y < height) out_height += 1;
+      const out_width = (width - pool_size_x) / stride_x + 1;
+      const out_height = (height - pool_size_y) / stride_y + 1;
 
       const Layer = struct {
         pub const Gradient = void;
@@ -257,7 +255,7 @@ pub fn getMaxPooling(pool_size_x: comptime_int, pool_size_y: comptime_int, strid
                 for (0..pool_size_x) |pool_x| {
                   const in_y = out_y * stride_y + pool_y;
                   const in_x = out_x * stride_x + pool_x;
-                  if (!(in_y >= height and in_x >= width)) {
+                  if (in_y < height and in_x < width) {
                     if (input[in_y][in_x] > max_val) {
                       max_val = input[in_y][in_x];
                       if (in_training) {
