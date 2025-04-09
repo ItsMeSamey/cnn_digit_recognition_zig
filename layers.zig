@@ -329,19 +329,19 @@ test getMaxPooling {
   try std.testing.expectEqual(output[1][1], 16.0);
 }
 
-// A special flatten layer (had to be implemented this way to prevent copying)
-pub fn getFlattener() LayerType {
+// A special reshape layer (had to be implemented this way to prevent copying)
+pub fn getReshaper(out_height: comptime_int, out_width: comptime_int) LayerType {
   @setEvalBranchQuota(1000_000);
   return struct {
     pub fn getLayer(F: type, in_training: bool, height: comptime_int, width: comptime_int) LayerOutputType {
-      const out_width = width * height;
+      std.debug.assert(height*width == out_height*out_width);
 
       const Layer = struct {
-        pub fn forward(input: *[height][width]F) *[1][out_width]F {
+        pub fn forward(input: *[height][width]F) *[out_height][out_width]F {
           return @ptrCast(input);
         }
 
-        pub fn backward(d_next: *[1][out_width]F) *[height][width]F {
+        pub fn backward(d_next: *[out_height][out_width]F) *[height][width]F {
           if (!in_training) @compileError("Cant call " ++ @typeName(@This()) ++ ".backward() when not in_training");
           return @ptrCast(d_next);
         }
@@ -349,9 +349,20 @@ pub fn getFlattener() LayerType {
 
       return .{
         .width = out_width,
-        .height = 1,
+        .height = out_height,
         .layer = Layer,
       };
+    }
+  }.getLayer;
+}
+
+
+// A special flatten layer
+pub fn getFlattener() LayerType {
+  @setEvalBranchQuota(1000_000);
+  return struct {
+    pub fn getLayer(F: type, in_training: bool, height: comptime_int, width: comptime_int) LayerOutputType {
+      return getReshaper(1, width * height).getLayer(F, in_training, height, width);
     }
   }.getLayer;
 }
@@ -781,7 +792,7 @@ pub fn mergeArray(layers: anytype) LayerType {
               if (i == LayerOperations.Layers.len - 1) cache_out else @ptrCast(self.cache[CacheSizeArray[i]..].ptr),
               if (i == 0) d_prev else d1,
               if (i == LayerOperations.Layers.len - 1) d_next else d2,
-              if (l.need_gradient) &@field(gradient.sub, l.name) else void,
+              if (l.need_gradient) &@field(gradient.sub, l.name) else .{},
               if (i == 0) calc_prev else true,
             );
             std.mem.swap(@TypeOf(d1), &d1, &d2);
@@ -814,6 +825,7 @@ pub fn mergeArray(layers: anytype) LayerType {
     }
   }.getLayer;
 }
+
 
 fn validateAny(layers: anytype) bool {
   const T = @TypeOf(layers);
@@ -865,7 +877,7 @@ pub fn mergeAny(layers: anytype) LayerType {
 
   const layer_fields = layers_typeinfo.@"struct".fields;
 
-  return struct {
+  const getterFn = struct {
     pub fn getLayer(F: type, in_training: bool, height: comptime_int, width: comptime_int) LayerOutputType {
       const LOPS = GetLayerOperations(init: {
         var gotten: [layer_fields.len]LayerType = undefined;
@@ -874,10 +886,20 @@ pub fn mergeAny(layers: anytype) LayerType {
       }, F, in_training, height, width);
       const LayerOperations = LOPS.LayerOperations;
 
-      const OutputHeight, OutputWidth = {};
+      const CacheSizeArray: [LayerOperations.Layers.len + 1]comptime_int = init: {
+        var retval: [LayerOperations.Layers.len + 1]comptime_int = undefined;
+        const last = LayerOperations.Layers[LayerOperations.Layers.len-1];
+        retval[LayerOperations.Layers.len] = last.output_height * last.output_width;
+        const offsets = LayerOperations.getOutputOffsets();
+        for (offsets[0..offsets.len-1], 0..) |o, i| retval[i] = o;
+        break :init retval;
+      };
+      const OutputHeight = 1;
+      const OutputWidth = CacheSizeArray[CacheSizeArray.len - 1];
 
       const Retval = struct {
         pub const Gradient = LOPS.Gradient;
+        // pub const Layers = LayerOperations.Layers;
 
         pub fn reset(self: *@This(), rng: std.Random) void {
           inline for (0..@This().Layers.len) |i| {
@@ -915,30 +937,9 @@ pub fn mergeAny(layers: anytype) LayerType {
           output: *[OutputHeight][OutputWidth]F
         ) void {
           @setEvalBranchQuota(1000_000);
-
-          if (in_training) {
-            inline for (@This().Layers, 0..) |l, i| {
-              const name = std.fmt.comptimePrint("{d}", .{i});
-              if (l.is_simple) continue;
-              @field(self.layers, name).forward(
-                if (i == 0) input else @ptrCast(self.cache[CacheSizeArray[i - 1]..].ptr),
-                if (i == LayerOperations.Layers.len - 1) output else @ptrCast(self.cache[CacheSizeArray[i]..].ptr),
-              );
-            }
-          } else {
-            var buf: [2][MaxLayerSize]F = undefined;
-            var p1 = &buf[0];
-            var p2 = &buf[1];
-
-            inline for (LayerOperations.TestingLayers, 0..) |l, i| {
-              if (l.is_simple) continue;
-              const name = std.fmt.comptimePrint("{d}", .{i});
-              @field(self.layers, name).forward(
-                if (i == 0) input else p1,
-                if (i == LayerOperations.Layers.len - 1) output else p2,
-              );
-              std.mem.swap(@TypeOf(p1), &p1, &p2);
-            }
+          inline for (LayerOperations.Layers, 0..) |l, i| {
+            if (l.is_simple) continue;
+            @field(self.layers, l.name).forward(input, @ptrCast(output[1][CacheSizeArray[i]..].ptr));
           }
         }
 
@@ -954,21 +955,30 @@ pub fn mergeAny(layers: anytype) LayerType {
           @setEvalBranchQuota(1000_000);
           if (!in_training) @compileError("Cant call " ++ @typeName(@This()) ++ ".backward() when not in_training");
 
-          var buf: [2][MaxLayerSize]F = undefined;
-          var d1 = &buf[0];
-          var d2 = &buf[1];
+          if (calc_prev) {
+            for (0..height) |y| {
+              for (0..width) |x| {
+                d_prev[y][x] = 0;
+              }
+            }
+          }
 
+          var d_buf: if (calc_prev) [height][width]F else void = undefined;
           inline for (LayerOperations.Layers, 0..) |l, i| {
             if (l.is_simple) continue;
             @field(self.layers, l.name).backward(
-              if (i == 0) cache_in else @ptrCast(self.cache[CacheSizeArray[i - 1]..].ptr),
-              if (i == LayerOperations.Layers.len - 1) cache_out else @ptrCast(self.cache[CacheSizeArray[i]..].ptr),
-              if (i == 0) d_prev else d1,
-              if (i == LayerOperations.Layers.len - 1) d_next else d2,
-              if (l.need_gradient) &@field(gradient.sub, l.name) else void,
-              if (i == 0) calc_prev else true,
+              cache_in, @ptrCast(cache_out[1][CacheSizeArray[i]..].ptr),
+              if (calc_prev) &d_buf else undefined, @ptrCast(d_next[1][CacheSizeArray[i]..].ptr),
+              if (l.need_gradient) &@field(gradient.sub, l.name) else .{},
+              calc_prev,
             );
-            std.mem.swap(@TypeOf(d1), &d1, &d2);
+            if (calc_prev) {
+              for (0..height) |y| {
+                for (0..width) |x| {
+                  d_prev[y][x] += d_buf[y][x] / @as(F, @floatFromInt(LayerOperations.Layers.len));
+                }
+              }
+            }
           }
         }
 
@@ -982,17 +992,19 @@ pub fn mergeAny(layers: anytype) LayerType {
               // logger.log(&@src(), "Applying Gradients to {s}\n", .{@typeName(@TypeOf(@field(gradients.sub, name)))});
             }
             // logger.writer.print("Applying Gradients to {s}\n", .{@typeName(@TypeOf(@field(gradients.sub, name)))}) catch {};
-            @field(self.layers, name).applyGradient(&@field(gradients.sub, name), learning_rate);
+            @field(self.layers, name).applyGradient(&@field(gradients.sub, name), learning_rate / @as(F, @floatFromInt(LayerOperations.Layers.len)));
           }
         }
       };
 
       return .{
-        .width = merged_fields[0].width,
-        .height = merged_fields[0].height,
-        .layer = merged_fields[0].layer,
+        .width = OutputWidth,
+        .height = OutputHeight,
+        .layer = Retval,
       };
     }
   }.getLayer;
+
+  return getterFn;
 }
 
