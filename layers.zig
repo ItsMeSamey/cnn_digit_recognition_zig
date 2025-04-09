@@ -525,7 +525,14 @@ test getDense {
   try std.testing.expect(Layer.height == 1);
 }
 
-fn GetLayerOperations(layers: anytype, F: type, in_training: bool, height: comptime_int, width: comptime_int) type {
+fn GetLOPS(
+  layers: anytype,
+  F: type,
+  in_training: bool,
+  height: comptime_int,
+  width: comptime_int,
+  mode: enum {array, tuple},
+) type {
   const LayerProperties = struct {
     output_height: comptime_int,
     output_width: comptime_int,
@@ -552,12 +559,18 @@ fn GetLayerOperations(layers: anytype, F: type, in_training: bool, height: compt
 
     fn translateAll() []const @This() {
       comptime var translated_layers: []const @This() = &.{};
-      inline for (layers) |layer| {
-        translated_layers = translated_layers ++ &[_]@This(){@This().fromLayerType(
-          layer,
-          if (translated_layers.len != 0) translated_layers[translated_layers.len - 1].output_height else height,
-          if (translated_layers.len != 0) translated_layers[translated_layers.len - 1].output_width else width,
-        )};
+      if (mode == .array) {
+        inline for (layers) |layer| {
+          translated_layers = translated_layers ++ &[_]@This(){@This().fromLayerType(
+            layer,
+            if (translated_layers.len != 0) translated_layers[translated_layers.len - 1].output_height else height,
+            if (translated_layers.len != 0) translated_layers[translated_layers.len - 1].output_width else width,
+          )};
+        }
+      } else if (mode == .tuple) {
+        inline for (layers) |layer| {
+          translated_layers = translated_layers ++ &[_]@This(){@This().fromLayerType(layer, height, width)};
+        }
       }
       return translated_layers;
     }
@@ -617,12 +630,11 @@ fn GetLayerOperations(layers: anytype, F: type, in_training: bool, height: compt
       });
     };
 
-    fn getOutputOffsets() [Layers.len]comptime_int {
+    fn getInputOffsets() [Layers.len]comptime_int {
       comptime var retval: [Layers.len]comptime_int = undefined;
       retval[0] = 0;
       inline for (1..Layers.len) |i| {
-        const l = Layers[i];
-        retval[i] = retval[i-1] + if (l.is_simple) 0 else l.output_height * l.output_width;
+        retval[i] = retval[i-1] + if (Layers[i].is_simple) 0 else Layers[i-1].output_height * Layers[i-1].output_width;
       }
       return retval;
     }
@@ -690,13 +702,15 @@ pub fn mergeArray(layers: anytype) LayerType {
 
   return struct {
     pub fn getLayer(F: type, in_training: bool, height: comptime_int, width: comptime_int) LayerOutputType {
-      const LOPS = GetLayerOperations(layers, F, in_training, height, width);
+      const LOPS = GetLOPS(layers, F, in_training, height, width, .array);
       const LayerOperations = LOPS.LayerOperations;
 
       const OutputWidth = LayerOperations.Layers[LayerOperations.Layers.len - 1].output_width;
       const OutputHeight = LayerOperations.Layers[LayerOperations.Layers.len - 1].output_height;
 
-      const CacheSizeArray = LayerOperations.getOutputOffsets();
+      // These can be used as output offsets as we are already given the first input,
+      // + we never use the last entry as we are given the last output.
+      const CacheSizeArray = LayerOperations.getInputOffsets();
       const CacheSize = CacheSizeArray[CacheSizeArray.len - 1];
 
       // The size of the largest array that is ever allocated as input/output of any layer
@@ -787,14 +801,16 @@ pub fn mergeArray(layers: anytype) LayerType {
           var d1 = &buf[0];
           var d2 = &buf[1];
 
-          inline for (LayerOperations.Layers, 0..) |l, i| {
+          inline for (0..LayerOperations.Layers.len) |_i| {
+            const i = LayerOperations.Layers.len - 1 - _i;
+            const l = LayerOperations.Layers[i];
             if (l.is_simple) continue;
             const name = std.fmt.comptimePrint("{d}", .{i});
             @field(self.layers, name).backward(
-              if (i == 0) cache_in else @ptrCast(self.cache[CacheSizeArray[i - 1]..].ptr),
-              if (i == LayerOperations.Layers.len - 1) cache_out else @ptrCast(self.cache[CacheSizeArray[i]..].ptr),
+              if (i == 0) cache_in else @ptrCast(self.cache[CacheSizeArray[i-1]..].ptr),
+              if (_i == 0) cache_out else @ptrCast(self.cache[CacheSizeArray[i]..].ptr),
               if (i == 0) d_prev else @ptrCast(d1),
-              if (i == LayerOperations.Layers.len - 1) d_next else @ptrCast(d2),
+              if (_i == 0) d_next else @ptrCast(d2),
               if (l.need_gradient) &@field(gradient.sub, name) else .{},
               if (i == 0) calc_prev else true,
             );
@@ -878,11 +894,11 @@ pub fn mergeAny(layers: anytype) LayerType {
 
   const getterFn = struct {
     pub fn getLayer(F: type, in_training: bool, height: comptime_int, width: comptime_int) LayerOutputType {
-      const LOPS = GetLayerOperations(init: {
+      const LOPS = GetLOPS(init: {
         var gotten: [layer_fields.len]LayerType = undefined;
         for (layer_fields, 0..) |l, i| gotten[i] = mergeAny(l.type);
         break :init gotten;
-      }, F, in_training, height, width);
+      }, F, in_training, height, width, .tuple);
       const LayerOperations = LOPS.LayerOperations;
 
       const CacheSizeArray: [LayerOperations.Layers.len + 1]comptime_int = init: {
@@ -893,6 +909,7 @@ pub fn mergeAny(layers: anytype) LayerType {
         for (offsets[0..offsets.len-1], 0..) |o, i| retval[i] = o;
         break :init retval;
       };
+
       const OutputHeight = 1;
       const OutputWidth = CacheSizeArray[CacheSizeArray.len - 1];
 
