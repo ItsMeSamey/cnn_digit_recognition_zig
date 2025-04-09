@@ -362,7 +362,7 @@ pub fn getFlattener() LayerType {
   @setEvalBranchQuota(1000_000);
   return struct {
     pub fn getLayer(F: type, in_training: bool, height: comptime_int, width: comptime_int) LayerOutputType {
-      return getReshaper(1, width * height).getLayer(F, in_training, height, width);
+      return getReshaper(1, width * height)(F, in_training, height, width);
     }
   }.getLayer;
 }
@@ -597,7 +597,7 @@ fn GetLayerOperations(layers: anytype, F: type, in_training: bool, height: compt
     const AsBytesTypes = init: {
       var fields: []const std.builtin.Type.StructField = &.{};
       for (Layers, 0..) |l, i| {
-        const byte_returntype = if (@sizeOf(l.layer_type) == 0) void else @typeInfo(l.layer_type.asBytes).@"fn".return_type.?;
+        const byte_returntype = if (@sizeOf(l.layer_type) == 0) void else @typeInfo(@TypeOf(l.layer_type.asBytes)).@"fn".return_type.?;
         fields = fields ++ &[_]std.builtin.Type.StructField{.{
           .name = std.fmt.comptimePrint("{d}", .{i}),
           .type = byte_returntype,
@@ -617,8 +617,8 @@ fn GetLayerOperations(layers: anytype, F: type, in_training: bool, height: compt
       });
     };
 
-    fn getOutputOffsets() [@This().Layers.len]comptime_int {
-      comptime var retval: [@This().Layers.len]comptime_int = undefined;
+    fn getOutputOffsets() [Layers.len]comptime_int {
+      comptime var retval: [Layers.len]comptime_int = undefined;
       retval[0] = 0;
       inline for (1..Layers.len) |i| {
         const l = Layers[i];
@@ -654,13 +654,13 @@ fn GetLayerOperations(layers: anytype, F: type, in_training: bool, height: compt
       });
     };
 
-    fn reset(self: *@This()) void {
+    pub fn reset(self: *@This()) void {
       inline for (LayerOperationsType.Layers, 0..) |l, i| {
         if (l.need_gradient) @field(self.sub, std.fmt.comptimePrint("{d}", .{i})).reset();
       }
     }
 
-    fn add(self: *@This(), other: *@This()) void {
+    pub fn add(self: *@This(), other: *@This()) void {
       inline for (LayerOperationsType.Layers, 0..) |l, i| {
         const name = std.fmt.comptimePrint("{d}", .{i});
         if (l.need_gradient) @field(self.sub, name).add(&@field(other.sub, name));
@@ -695,6 +695,7 @@ pub fn mergeArray(layers: anytype) LayerType {
 
       const OutputWidth = LayerOperations.Layers[LayerOperations.Layers.len - 1].output_width;
       const OutputHeight = LayerOperations.Layers[LayerOperations.Layers.len - 1].output_height;
+
       const CacheSizeArray = LayerOperations.getOutputOffsets();
       const CacheSize = CacheSizeArray[CacheSizeArray.len - 1];
 
@@ -702,12 +703,13 @@ pub fn mergeArray(layers: anytype) LayerType {
       const MaxLayerSize = std.mem.max(comptime_int, &CacheSizeArray);
 
       const Retval = struct {
+        layers: LayerOperations.LayerInstanceType,
         cache: if (!in_training) void else [CacheSize]F = undefined,
 
         pub const Gradient = LOPS.Gradient;
 
         pub fn reset(self: *@This(), rng: std.Random) void {
-          inline for (0..@This().Layers.len) |i| {
+          inline for (0..LayerOperations.Layers.len) |i| {
             const name = std.fmt.comptimePrint("{d}", .{i});
             if (@sizeOf(@TypeOf(@field(self.layers, name))) == 0) {
               // logger.log(&@src(), "Skipped {s}\n", .{@typeName(@TypeOf(@field(self.layers, name)))});
@@ -720,7 +722,7 @@ pub fn mergeArray(layers: anytype) LayerType {
 
         pub fn asBytes(self: *const @This()) LayerOperations.AsBytesTypes {
           var retval: LayerOperations.AsBytesTypes = undefined;
-          inline for (@typeInfo(LayerOperations.Layers).@"struct".fields) |l| {
+          inline for (@typeInfo(LayerOperations.LayerInstanceType).@"struct".fields) |l| {
             if (l.type == void) continue;
             @field(retval, l.name) = @field(self.layers, l.name).asBytes();
           }
@@ -729,9 +731,9 @@ pub fn mergeArray(layers: anytype) LayerType {
 
         pub fn fromBytes(bytes: LayerOperations.AsBytesTypes) @This() {
           var self: @This() = undefined;
-          inline for (@typeInfo(LayerOperations.Layers).@"struct".fields) |l| {
+          inline for (@typeInfo(LayerOperations.LayerInstanceType).@"struct".fields) |l| {
             if (l.type == void) continue;
-            @field(self.layers, l.name) = @field(bytes, l.name).fromBytes();
+            @field(self.layers, l.name) = @TypeOf(@field(self.layers, l.name)).fromBytes(@field(bytes, l.name));
           }
           return self;
         }
@@ -744,7 +746,7 @@ pub fn mergeArray(layers: anytype) LayerType {
           @setEvalBranchQuota(1000_000);
 
           if (in_training) {
-            inline for (@This().Layers, 0..) |l, i| {
+            inline for (LayerOperations.Layers, 0..) |l, i| {
               const name = std.fmt.comptimePrint("{d}", .{i});
               if (l.is_simple) continue;
               @field(self.layers, name).forward(
@@ -757,12 +759,12 @@ pub fn mergeArray(layers: anytype) LayerType {
             var p1 = &buf[0];
             var p2 = &buf[1];
 
-            inline for (LayerOperations.TestingLayers, 0..) |l, i| {
+            inline for (LayerOperations.Layers, 0..) |l, i| {
               if (l.is_simple) continue;
               const name = std.fmt.comptimePrint("{d}", .{i});
               @field(self.layers, name).forward(
-                if (i == 0) input else p1,
-                if (i == LayerOperations.Layers.len - 1) output else p2,
+                if (i == 0) input else @ptrCast(p1),
+                if (i == LayerOperations.Layers.len - 1) output else @ptrCast(p2),
               );
               std.mem.swap(@TypeOf(p1), &p1, &p2);
             }
@@ -787,12 +789,13 @@ pub fn mergeArray(layers: anytype) LayerType {
 
           inline for (LayerOperations.Layers, 0..) |l, i| {
             if (l.is_simple) continue;
-            @field(self.layers, l.name).backward(
+            const name = std.fmt.comptimePrint("{d}", .{i});
+            @field(self.layers, name).backward(
               if (i == 0) cache_in else @ptrCast(self.cache[CacheSizeArray[i - 1]..].ptr),
               if (i == LayerOperations.Layers.len - 1) cache_out else @ptrCast(self.cache[CacheSizeArray[i]..].ptr),
-              if (i == 0) d_prev else d1,
-              if (i == LayerOperations.Layers.len - 1) d_next else d2,
-              if (l.need_gradient) &@field(gradient.sub, l.name) else .{},
+              if (i == 0) d_prev else @ptrCast(d1),
+              if (i == LayerOperations.Layers.len - 1) d_next else @ptrCast(d2),
+              if (l.need_gradient) &@field(gradient.sub, name) else .{},
               if (i == 0) calc_prev else true,
             );
             std.mem.swap(@TypeOf(d1), &d1, &d2);
@@ -800,7 +803,7 @@ pub fn mergeArray(layers: anytype) LayerType {
         }
 
         pub fn applyGradient(self: *@This(), gradients: *const Gradient, learning_rate: F) void {
-          inline for (0..@This().Layers.len) |i| {
+          inline for (0..LayerOperations.Layers.len) |i| {
             const name = std.fmt.comptimePrint("{d}", .{i});
             if (@TypeOf(@field(gradients.sub, name)) == void) {
               // logger.log(&@src(), "Skipped: {s}", .{@typeName(@TypeOf(@field(gradients.sub, name)))});
@@ -814,12 +817,9 @@ pub fn mergeArray(layers: anytype) LayerType {
         }
       };
 
-      std.debug.assert(height == Retval.OutputHeight);
-      std.debug.assert(width == Retval.OutputWidth);
-
       return .{
-        .width = Retval.OutputWidth,
-        .height = Retval.OutputHeight,
+        .width = OutputWidth,
+        .height = OutputHeight,
         .layer = Retval,
       };
     }
@@ -827,8 +827,7 @@ pub fn mergeArray(layers: anytype) LayerType {
 }
 
 
-fn validateAny(layers: anytype) bool {
-  const T = @TypeOf(layers);
+fn validateAny(T: type) bool {
   if (T == LayerType) return true;
 
   const layers_typeinfo = @typeInfo(T);
@@ -861,7 +860,7 @@ fn validateAny(layers: anytype) bool {
 
 // Merges tuple of layers / layer arrays / nested tuples into a single layer
 pub fn mergeAny(layers: anytype) LayerType {
-  if (!validateAny(layers)) {
+  if (!validateAny(@TypeOf(layers))) {
     @compileError("Layers Type `" ++ @typeName(layers) ++ "` is invalid");
   }
 
@@ -902,7 +901,7 @@ pub fn mergeAny(layers: anytype) LayerType {
         // pub const Layers = LayerOperations.Layers;
 
         pub fn reset(self: *@This(), rng: std.Random) void {
-          inline for (0..@This().Layers.len) |i| {
+          inline for (0..LayerOperations.Layers.len) |i| {
             const name = std.fmt.comptimePrint("{d}", .{i});
             if (@sizeOf(@TypeOf(@field(self.layers, name))) == 0) {
               // logger.log(&@src(), "Skipped {s}\n", .{@typeName(@TypeOf(@field(self.layers, name)))});
@@ -915,7 +914,7 @@ pub fn mergeAny(layers: anytype) LayerType {
 
         pub fn asBytes(self: *const @This()) LayerOperations.AsBytesTypes {
           var retval: LayerOperations.AsBytesTypes = undefined;
-          inline for (@typeInfo(LayerOperations.Layers).@"struct".fields) |l| {
+          inline for (@typeInfo(LayerOperations.LayerInstanceType).@"struct".fields) |l| {
             if (l.type == void) continue;
             @field(retval, l.name) = @field(self.layers, l.name).asBytes();
           }
@@ -924,9 +923,9 @@ pub fn mergeAny(layers: anytype) LayerType {
 
         pub fn fromBytes(bytes: LayerOperations.AsBytesTypes) @This() {
           var self: @This() = undefined;
-          inline for (@typeInfo(LayerOperations.Layers).@"struct".fields) |l| {
+          inline for (@typeInfo(LayerOperations.LayerInstanceType).@"struct".fields) |l| {
             if (l.type == void) continue;
-            @field(self.layers, l.name) = @field(bytes, l.name).fromBytes();
+            @field(self.layers, l.name) = @TypeOf(@field(self.layers, l.name)).fromBytes(@field(bytes, l.name));
           }
           return self;
         }
@@ -983,7 +982,7 @@ pub fn mergeAny(layers: anytype) LayerType {
         }
 
         pub fn applyGradient(self: *@This(), gradients: *const Gradient, learning_rate: F) void {
-          inline for (0..@This().Layers.len) |i| {
+          inline for (0..LayerOperations.Layers.len) |i| {
             const name = std.fmt.comptimePrint("{d}", .{i});
             if (@TypeOf(@field(gradients.sub, name)) == void) {
               // logger.log(&@src(), "Skipped: {s}", .{@typeName(@TypeOf(@field(gradients.sub, name)))});

@@ -9,25 +9,24 @@ pub fn CNN(
   layers: anytype,
 ) type {
   @setEvalBranchQuota(1000_000);
-  const mergedTrainer = Layers.mergeAny(layers)(F, height, width, true);
+  const mergedTrainer = Layers.mergeAny(layers)(F, true, height, width);
   std.debug.assert(mergedTrainer.height == 1);
 
-  const mergedTester = Layers.mergeAny(layers)(F, height, width, false);
+  const mergedTester = Layers.mergeAny(layers)(F, false, height, width);
   std.debug.assert(mergedTester.height == mergedTrainer.height);
   std.debug.assert(mergedTester.width == mergedTrainer.width);
 
-  const Retval = struct {
+  return struct {
     pub const OutputWidth = mergedTrainer.width;
     const LossFn = loss_gen(OutputWidth, F);
 
     pub const Gradient = mergedTrainer.layer.Gradient;
 
     pub const Trainer = struct {
-      layer: mergedTrainer,
-
+      layer: mergedTrainer.layer,
 
       pub fn toTester(self: *const @This()) Tester {
-        return .{.layer = mergedTester.layer.fromLayer(self.layer.asBytes())};
+        return .{.layer = mergedTester.layer.fromBytes(self.layer.asBytes())};
       }
 
       // Sets the value in cache
@@ -60,11 +59,6 @@ pub fn CNN(
         var output_buf: [1][OutputWidth]F = undefined;
         var gradients: Gradient = undefined;
 
-        // inline for (0..@This().Layers.len) |i| {
-        //   logger.log(&@src(), "Layer {d}\n", .{i});
-        //   logger.log(&@src(), "{any}\n", .{@field(self.layers, std.fmt.comptimePrint("{d}", .{i}))});
-        // }
-
         var step: usize = 0;
         while (true) {
           var n: usize = 0;
@@ -86,7 +80,7 @@ pub fn CNN(
             self.forward(&input_buf, &output_buf);
             self.backward(&input_buf, &output_buf, next.label, &gradients);
 
-            const loss = LossFn.forward(output_buf, next.label);
+            const loss = LossFn.forward(&output_buf[0], next.label);
             gross_loss += loss;
             if (options.verbose) {
               logger.writer.print("{d:4}-{d:2} Loss({d}) = {d:.3}\n", .{step, n, next.label, loss*100}) catch {};
@@ -98,7 +92,7 @@ pub fn CNN(
             logger.writer.print("Step: {d:4}-(1-{d:2}) Loss: {d:.3}\n", .{step, n, gross_loss*100}) catch {};
           }
 
-          self.applyGradients(&gradients, options.learning_rate / @as(F, @floatFromInt(options.batch_size)));
+          self.layer.applyGradient(&gradients, options.learning_rate / @as(F, @floatFromInt(options.batch_size)));
 
           logger.buffered.flush() catch {};
           if (!iterator.hasNext()) break;
@@ -107,10 +101,10 @@ pub fn CNN(
     };
 
     pub const Tester = struct {
-      layer: mergedTester,
+      layer: mergedTester.layer,
 
       pub fn toTrainer(self: *const @This()) Trainer {
-        return .{.layer = mergedTrainer.layer.fromLayer(self.layer.asBytes())};
+        return .{.layer = mergedTrainer.layer.fromBytes(self.layer.asBytes())};
       }
 
       pub fn forward(self: *const @This(), input: *[height][width]F, output: *[1][OutputWidth]F) void {
@@ -122,12 +116,21 @@ pub fn CNN(
         var retval: usize = 0;
         var n: usize = 0;
         var iterator = iterator_ro;
+        var input_buf: [height][width]F = undefined;
+        var output_buf: [1][OutputWidth]F = undefined;
+
         while (iterator.next()) |next| {
           n += 1;
-          const predictions = self.forward(next.image.*);
+          inline for (next.image, 0..) |row, i| {
+            inline for (row, 0..) |val, j| {
+              input_buf[i][j] = @as(F, @floatFromInt(val));
+            }
+          }
+          self.forward(&input_buf, &output_buf);
+
           var guess: usize = 0;
-          inline for (0..predictions.len) |i| {
-            if (predictions[guess] < predictions[i]) guess = i;
+          inline for (0..OutputWidth) |i| {
+            if (output_buf[0][guess] < output_buf[0][i]) guess = i;
           }
           if (guess == next.label) retval += 1;
 
@@ -137,17 +140,7 @@ pub fn CNN(
         return @as(F, @floatFromInt(retval)) / @as(F, @floatFromInt(n));
       }
     };
-
-    test {
-      std.debug.print("\n----------- TRAINING LAYERS -----------\n", .{});
-      inline for (Trainer.Layers) |l| std.debug.print("{any}\n", .{l});
-      std.debug.print("\n----------- TESTING LAYERS -----------\n", .{});
-      inline for (Tester.Layers) |l| std.debug.print("{any}\n", .{l});
-    }
   };
-
-  std.debug.assert(Retval.Trainer.Layers[Retval.Trainer.Layers.len - 1].output_height == 1);
-  return Retval;
 }
 
 test "CNN Deepnet" {
@@ -197,7 +190,7 @@ test "CNN Deepnet" {
     Layer.getDense(3, Activation.NormalizeSquared),
   });
 
-  var trainer = cnn.Trainer{.layers = undefined};
+  var trainer: cnn.Trainer = undefined;
 
   var rng = std.Random.DefaultPrng.init(0);
   trainer.reset(rng.random());
