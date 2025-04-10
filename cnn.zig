@@ -30,11 +30,49 @@ pub fn CNN(
       return max_index;
     }
 
+    fn copyData(dst_ptr: anytype, src_ptr: anytype) void {
+      @setEvalBranchQuota(1000_000);
+      const src_type = std.meta.Child(@TypeOf(src_ptr));
+      const dst_type = std.meta.Child(@TypeOf(dst_ptr));
+
+      if (src_type == dst_type) {
+        dst_ptr.* = src_ptr.*;
+        return;
+      } else if (dst_type == void) {
+        return;
+      }
+
+      const src_typeinfo = @typeInfo(src_type);
+      const dst_typeinfo = @typeInfo(dst_type);
+
+      if (comptime std.meta.activeTag(src_typeinfo) != std.meta.activeTag(dst_typeinfo)) {
+        @compileError("Cant copy `" ++ @typeName(src_type) ++ "` to `" ++ @typeName(dst_type) ++ "` as they are different types entirely");
+      }
+
+      switch (dst_typeinfo) {
+        .@"struct" => |info| {
+          inline for (info.fields) |field| {
+            copyData(&@field(dst_ptr, field.name), &@field(src_ptr, field.name));
+          }
+        },
+        .@"array" => |info| {
+          inline for (0..info.len) |i| {
+            copyData(&@field(dst_ptr, i), &@field(src_ptr, i));
+          }
+        },
+        else => {
+          @compileError("Cant copy `" ++ @typeName(src_type) ++ "` to `" ++ @typeName(dst_type) ++ "` as they are incompatible");
+        },
+      }
+    }
+
     pub const Trainer = struct {
       layer: mergedTrainer.layer,
 
       pub fn toTester(self: *const @This()) Tester {
-        return .{.layer = mergedTester.layer.fromBytes(self.layer.asBytes())};
+        var retval: Tester = undefined;
+        copyData(&retval, self);
+        return retval;
       }
 
       // Sets the value in cache
@@ -102,13 +140,43 @@ pub fn CNN(
           if (!iterator.hasNext()) break;
         }
       }
+
+      pub fn @"test"(self: *@This(), iterator_ro: anytype, comptime verbose: bool) F {
+        defer logger.buffered.flush() catch {};
+        var retval: usize = 0;
+        var n: usize = 0;
+        var iterator = iterator_ro;
+        var input_buf: [height][width]F = undefined;
+        var output_buf: [1][OutputWidth]F = undefined;
+
+        while (iterator.next()) |next| {
+          n += 1;
+          inline for (next.image, 0..) |row, i| {
+            inline for (row, 0..) |val, j| {
+              input_buf[i][j] = @as(F, @floatFromInt(val));
+            }
+          }
+          self.forward(&input_buf, &output_buf);
+
+          const guess = getMaximalIndex(output_buf[0]);
+          if (guess == next.label) retval += 1;
+
+          if (verbose) {
+            logger.writer.print("{d:5} Prediction({d}) = {d}\n", .{n, next.label, guess}) catch {};
+          }
+        }
+
+        return @as(F, @floatFromInt(retval)) / @as(F, @floatFromInt(n));
+      }
     };
 
     pub const Tester = struct {
       layer: mergedTester.layer,
 
       pub fn toTrainer(self: *const @This()) Trainer {
-        return .{.layer = mergedTrainer.layer.fromBytes(self.layer.asBytes())};
+        var retval: Trainer = undefined;
+        copyData(&retval, self);
+        return retval;
       }
 
       pub fn forward(self: *const @This(), input: *[height][width]F, output: *[1][OutputWidth]F) void {

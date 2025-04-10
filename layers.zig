@@ -1,41 +1,12 @@
 const std = @import("std");
 const logger = @import("logger.zig");
 
-fn CopyPtrAttrs(
-  comptime source: type,
-  comptime size: std.builtin.Type.Pointer.Size,
-  comptime child: type,
-) type {
-  const info = @typeInfo(source).pointer;
-  return @Type(.{
-    .pointer = .{
-      .size = size,
-      .is_const = info.is_const,
-      .is_volatile = info.is_volatile,
-      .is_allowzero = info.is_allowzero,
-      .alignment = info.alignment,
-      .address_space = info.address_space,
-      .child = child,
-      .sentinel_ptr = null,
-    },
-  });
-}
-
-fn AsBytesReturnType(comptime P: type) type {
-  const pointer = @typeInfo(P).pointer;
-  std.debug.assert(pointer.size == .one);
-  const size = @sizeOf(pointer.child);
-  return CopyPtrAttrs(P, .one, [size]u8);
-}
-
 pub const LayerType = fn (F: type, in_training: bool, width: comptime_int, height: comptime_int) LayerOutputType;
 pub const LayerOutputType = struct {
   width: comptime_int,
   height: comptime_int,
   // layer type must have the following functions
   // pub fn reset(self: *@This(), rng: std.Random) void
-  // pub fn asBytes(self: *@This()) [<any_size>]u8
-  // pub fn fromBytes([<any_size>]u8) @This()
   // pub fn forward(self: *@This(), input: *[height][width]F, output: *[out_height][out_width]F)
   // pub fn backward(
   //   self: *@This(),
@@ -106,14 +77,6 @@ pub fn getConvolver(
               self.filter[i][j] = rng.float(F)*10 - 5;
             }
           }
-        }
-
-        pub fn asBytes(self: *const @This()) AsBytesReturnType(*const @This()) {
-          return std.mem.asBytes(self);
-        }
-
-        pub fn fromBytes(bytes: AsBytesReturnType(*const @This())) @This() {
-          return std.mem.bytesAsValue(@This(), bytes).*;
         }
 
         pub fn forward(self: *const @This(), input: *[height][width]F, output: *[out_height][out_width]F) void {
@@ -237,13 +200,6 @@ pub fn getMaxPooling(pool_size_x: comptime_int, pool_size_y: comptime_int, strid
 
         pub fn reset(_: *@This(), _: std.Random) void {
           // Nothing to reset
-        }
-        pub fn asBytes(_: *const @This()) null {
-          return null; // Nothing to save
-        }
-
-        pub fn fromBytes(_: null) @This() {
-          return .{}; // Nothing to restore
         }
 
         pub fn forward(self: *const @This(), input: *[height][width]F, output: *[out_height][out_width]F) void {
@@ -435,21 +391,6 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
           }
         }
 
-        const as_bytes_len = out_width * (width + 1) * @sizeOf(F);
-        pub fn asBytes(self: *const @This()) [as_bytes_len]u8 {
-          var retval: [as_bytes_len]u8 = undefined;
-          @memcpy(retval[0..width*out_width*@sizeOf(F)], std.mem.asBytes(&self.weights));
-          @memcpy(retval[width*out_width*@sizeOf(F)..], std.mem.asBytes(&self.biases));
-          return retval;
-        }
-
-        pub fn fromBytes(bytes: [as_bytes_len]u8) @This() {
-          var self: @This() = undefined;
-          @memcpy(std.mem.asBytes(&self.weights), bytes[0..width*out_width*@sizeOf(F)]);
-          @memcpy(std.mem.asBytes(&self.biases), bytes[width*out_width*@sizeOf(F)..]);
-          return self;
-        }
-
         pub fn forward(self: if (in_training) *@This() else *const @This(), input: *[1][width]F, output: *[1][out_width]F) void {
           @setEvalBranchQuota(1000_000);
           logger.log(&@src(), "inp: {d}\n", .{input});
@@ -639,29 +580,6 @@ fn GetLOPS(
       return .{layer.output_height, layer.output_width};
     }
 
-    const AsBytesTypes = init: {
-      var fields: []const std.builtin.Type.StructField = &.{};
-      for (Layers, 0..) |l, i| {
-        const byte_returntype = if (@sizeOf(l.layer_type) == 0) void else @typeInfo(@TypeOf(l.layer_type.asBytes)).@"fn".return_type.?;
-        fields = fields ++ &[_]std.builtin.Type.StructField{.{
-          .name = std.fmt.comptimePrint("{d}", .{i}),
-          .type = byte_returntype,
-          .default_value_ptr = null,
-          .is_comptime = false,
-          .alignment = @alignOf(byte_returntype),
-        }};
-      }
-
-      break :init @Type(.{
-        .@"struct" = .{
-          .layout = .auto,
-          .fields = fields,
-          .decls = &[_]std.builtin.Type.Declaration{},
-          .is_tuple = false,
-        }
-      });
-    };
-
     fn getInputOffsets() [Layers.len]comptime_int {
       comptime var retval: [Layers.len]comptime_int = undefined;
       retval[0] = 0;
@@ -767,24 +685,6 @@ pub fn mergeArray(layers: anytype) LayerType {
             // logger.log(&@src(), "Reset {s}\n", .{@typeName(@TypeOf(@field(self.layers, name)))});
             @field(self.layers, name).reset(rng);
           }
-        }
-
-        pub fn asBytes(self: *const @This()) LayerOperations.AsBytesTypes {
-          var retval: LayerOperations.AsBytesTypes = undefined;
-          inline for (@typeInfo(LayerOperations.LayerInstanceType).@"struct".fields) |l| {
-            if (@sizeOf(l.type) == 0) continue;
-            @field(retval, l.name) = @field(self.layers, l.name).asBytes();
-          }
-          return retval;
-        }
-
-        pub fn fromBytes(bytes: LayerOperations.AsBytesTypes) @This() {
-          var self: @This() = undefined;
-          inline for (@typeInfo(LayerOperations.LayerInstanceType).@"struct".fields) |l| {
-            if (@sizeOf(l.type) == 0) continue;
-            @field(self.layers, l.name) = @TypeOf(@field(self.layers, l.name)).fromBytes(@field(bytes, l.name));
-          }
-          return self;
         }
 
         pub fn forward(
@@ -971,24 +871,6 @@ pub fn mergeAny(layers: anytype) LayerType {
             // logger.log(&@src(), "Reset {s}\n", .{@typeName(@TypeOf(@field(self.layers, name)))});
             @field(self.layers, name).reset(rng);
           }
-        }
-
-        pub fn asBytes(self: *const @This()) LayerOperations.AsBytesTypes {
-          var retval: LayerOperations.AsBytesTypes = undefined;
-          inline for (@typeInfo(LayerOperations.LayerInstanceType).@"struct".fields) |l| {
-            if (@sizeOf(l.type) == 0) continue;
-            @field(retval, l.name) = @field(self.layers, l.name).asBytes();
-          }
-          return retval;
-        }
-
-        pub fn fromBytes(bytes: LayerOperations.AsBytesTypes) @This() {
-          var self: @This() = undefined;
-          inline for (@typeInfo(LayerOperations.LayerInstanceType).@"struct".fields) |l| {
-            if (@sizeOf(l.type) == 0) continue;
-            @field(self.layers, l.name) = @TypeOf(@field(self.layers, l.name)).fromBytes(@field(bytes, l.name));
-          }
-          return self;
         }
 
         pub fn forward(
