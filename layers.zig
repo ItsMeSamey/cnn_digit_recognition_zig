@@ -402,12 +402,12 @@ pub fn getDense(out_width: comptime_int, function_getter: fn(LEN: comptime_int, 
             }
             if (@TypeOf(self.cache_in) == void) {
               output[0][i] = sum;
-              Activate.forward(&output[0], &output[0]);
             } else {
               self.cache_in[i] = sum;
-              Activate.forward(&self.cache_in, &output[0]);
             }
           }
+
+          Activate.forward(if (@TypeOf(self.cache_in) == void) &output[0] else &self.cache_in, &output[0]);
         }
 
         pub fn backward(
