@@ -171,7 +171,6 @@ pub fn printImage(img: anytype) void {
     }
   }
 
-
   const diff = max_val - min_val;
   const factor = @as(f32, @floatFromInt(ascii_chars.len - 1)) / @as(f32, if (@typeInfo(T) == .float) @floatCast(diff) else @floatFromInt(diff));
   if (min_val == max_val) {

@@ -210,7 +210,7 @@ pub fn getConvolver(
 }
 
 test getConvolver {
-  const LayerFn = getConvolver(2,2,2,2);
+  const LayerFn = getConvolver(2,2,2,2, @import("functions_activate.zig").getPReLU(0.1));
   const Layer = LayerFn(f32, false, 33, 32);
   try std.testing.expect(Layer.width == 16);
   try std.testing.expect(Layer.height == 17);
@@ -350,25 +350,19 @@ pub fn getReshaper(out_height: comptime_int, out_width: comptime_int) LayerType 
   @setEvalBranchQuota(1000_000);
   return struct {
     pub fn getLayer(F: type, in_training: bool, height: comptime_int, width: comptime_int) LayerOutputType {
+      _ = in_training;
       if (comptime height*width != out_height*out_width) {
         @compileError(std.fmt.comptimePrint("Cant reshape to {d}x{d} from {d}x{d}", .{ out_height, out_width, height, width }));
       }
 
-      const Layer = struct {
-        pub fn forward(input: *[height][width]F) *[out_height][out_width]F {
-          return @ptrCast(input);
-        }
-
-        pub fn backward(d_next: *[out_height][out_width]F) *[height][width]F {
-          if (!in_training) @compileError("Cant call " ++ @typeName(@This()) ++ ".backward() when not in_training");
-          return @ptrCast(d_next);
-        }
-      };
-
       return .{
         .width = out_width,
         .height = out_height,
-        .layer = Layer,
+        .layer = struct {
+          pub fn forward(input: *[height][width]F) *[out_height][out_width]F {
+            return @ptrCast(input);
+          }
+        },
       };
     }
   }.getLayer;
@@ -558,39 +552,51 @@ fn GetLOPS(
 
     need_gradient: bool,
     gradient_type: type,
-    is_simple: bool,
 
-    fn fromLayerType(layer_output: LayerType, h_in: comptime_int, w_in: comptime_int) @This() {
+    const Self = @This();
+    const SimpleWrapped = struct {
+      self: Self,
+      is_simple: bool,
+    };
+
+    fn fromLayerType(layer_output: LayerType, h_in: comptime_int, w_in: comptime_int) SimpleWrapped {
       const result = layer_output(F, in_training, h_in, w_in);
       const is_simple = @TypeOf(result.layer.forward) == fn (input: *[h_in][w_in]F) *[result.height][result.width]F;
       const gradient_type = if (is_simple) void else result.layer.Gradient;
 
       return .{
-        .output_height = result.height,
-        .output_width = result.width,
-        .layer_type = result.layer,
-        .need_gradient = !(is_simple or @sizeOf(gradient_type) == 0),
-        .gradient_type = gradient_type,
+        .self = .{
+          .output_height = result.height,
+          .output_width = result.width,
+          .layer_type = result.layer,
+          .need_gradient = @sizeOf(gradient_type) != 0,
+          .gradient_type = gradient_type,
+        },
         .is_simple = is_simple,
       };
     }
 
     fn translateAll() []const @This() {
-      comptime var translated_layers: []const @This() = &.{};
+      comptime var translated_layers: []const SimpleWrapped = &.{};
       if (mode == .array) {
         inline for (layers) |layer| {
-          translated_layers = translated_layers ++ &[_]@This(){@This().fromLayerType(
+          translated_layers = translated_layers ++ &[_]SimpleWrapped{fromLayerType(
             layer,
-            if (translated_layers.len != 0) translated_layers[translated_layers.len - 1].output_height else height,
-            if (translated_layers.len != 0) translated_layers[translated_layers.len - 1].output_width else width,
+            if (translated_layers.len != 0) translated_layers[translated_layers.len - 1].self.output_height else height,
+            if (translated_layers.len != 0) translated_layers[translated_layers.len - 1].self.output_width else width,
           )};
         }
       } else if (mode == .tuple) {
         inline for (layers) |layer| {
-          translated_layers = translated_layers ++ &[_]@This(){@This().fromLayerType(layer, height, width)};
+          translated_layers = translated_layers ++ &[_]SimpleWrapped{fromLayerType(layer, height, width)};
         }
       }
-      return translated_layers;
+      comptime var retval: []const @This() = &.{};
+      inline for (translated_layers) |layer| {
+        if (layer.is_simple) continue;
+        retval = retval ++ &[_]@This(){layer.self};
+      }
+      return retval;
     }
   };
 
@@ -620,7 +626,15 @@ fn GetLOPS(
     const LayerInstanceType = getType(Layers);
 
     fn getLayerInputDims(layer_num: comptime_int) [2]comptime_int {
-      if (layer_num == 0) return .{height, width};
+      if (layer_num == 0) {
+        const l = Layers[0];
+        const inputPtrType = @typeInfo(@TypeOf(l.layer_type.forward)).@"fn".params[1].type.?;
+        const inputType = std.meta.Child(inputPtrType);
+        const h = @typeInfo(inputType).array.len;
+        const subinputType = std.meta.Child(inputType);
+        const w = @typeInfo(subinputType).array.len;
+        return .{h, w};
+      }
       const layer = Layers[layer_num - 1];
       return .{layer.output_height, layer.output_width};
     }
@@ -652,7 +666,7 @@ fn GetLOPS(
       comptime var retval: [Layers.len]comptime_int = undefined;
       retval[0] = 0;
       inline for (1..Layers.len) |i| {
-        retval[i] = retval[i-1] + if (Layers[i].is_simple) 0 else Layers[i-1].output_height * Layers[i-1].output_width;
+        retval[i] = retval[i-1] + Layers[i-1].output_height * Layers[i-1].output_width;
       }
       return retval;
     }
@@ -726,6 +740,9 @@ pub fn mergeArray(layers: anytype) LayerType {
       const OutputWidth = LayerOperations.Layers[LayerOperations.Layers.len - 1].output_width;
       const OutputHeight = LayerOperations.Layers[LayerOperations.Layers.len - 1].output_height;
 
+      const InputHeight = LayerOperations.getLayerInputDims(0)[0];
+      const InputWidth = LayerOperations.getLayerInputDims(0)[1];
+
       // These can be used as output offsets as we are already given the first input,
       // + we never use the last entry as we are given the last output.
       const CacheSizeArray = LayerOperations.getInputOffsets();
@@ -772,15 +789,21 @@ pub fn mergeArray(layers: anytype) LayerType {
 
         pub fn forward(
           self: if (in_training) *@This() else *const @This(),
-          input: *[height][width]F,
+          input: *[InputHeight][InputWidth]F,
           output: *[OutputHeight][OutputWidth]F
         ) void {
           @setEvalBranchQuota(1000_000);
 
+          logger.log(&@src(), "mergein: {d}\n", .{input});
+          defer logger.log(&@src(), "mergeout: {d}\n", .{output});
+
           if (in_training) {
-            inline for (LayerOperations.Layers, 0..) |l, i| {
+            inline for (0..LayerOperations.Layers.len) |i| {
               const name = std.fmt.comptimePrint("{d}", .{i});
-              if (l.is_simple) continue;
+              logger.log(&@src(), "mergelayer({d})in: {d}\n", .{i, if (i == 0) input else @as(
+                *[LayerOperations.Layers[i-1].output_height][LayerOperations.Layers[i-1].output_width]F,
+                @ptrCast(self.cache[CacheSizeArray[i - 1]..].ptr)
+              )});
               @field(self.layers, name).forward(
                 if (i == 0) input else @ptrCast(self.cache[CacheSizeArray[i - 1]..].ptr),
                 if (i == LayerOperations.Layers.len - 1) output else @ptrCast(self.cache[CacheSizeArray[i]..].ptr),
@@ -791,8 +814,7 @@ pub fn mergeArray(layers: anytype) LayerType {
             var p1 = &buf[0];
             var p2 = &buf[1];
 
-            inline for (LayerOperations.Layers, 0..) |l, i| {
-              if (l.is_simple) continue;
+            inline for (0..LayerOperations.Layers.len) |i| {
               const name = std.fmt.comptimePrint("{d}", .{i});
               @field(self.layers, name).forward(
                 if (i == 0) input else @ptrCast(p1),
@@ -805,9 +827,9 @@ pub fn mergeArray(layers: anytype) LayerType {
 
         pub fn backward(
           self: *@This(),
-          cache_in: *const [height][width]F,
+          cache_in: *const [InputHeight][InputWidth]F,
           cache_out: *const [OutputHeight][OutputWidth]F,
-          d_prev: *[height][width]F,
+          d_prev: *[InputHeight][InputWidth]F,
           d_next: *const [OutputHeight][OutputWidth]F,
           gradient: *Gradient,
           comptime calc_prev: bool,
@@ -822,7 +844,6 @@ pub fn mergeArray(layers: anytype) LayerType {
           inline for (0..LayerOperations.Layers.len) |_i| {
             const i = LayerOperations.Layers.len - 1 - _i;
             const l = LayerOperations.Layers[i];
-            if (l.is_simple) continue;
             const name = std.fmt.comptimePrint("{d}", .{i});
             @field(self.layers, name).backward(
               if (i == 0) cache_in else @ptrCast(self.cache[CacheSizeArray[i-1]..].ptr),
@@ -932,6 +953,9 @@ pub fn mergeAny(layers: anytype) LayerType {
       const OutputHeight = 1;
       const OutputWidth = CacheSizeArray[CacheSizeArray.len - 1];
 
+      const InputHeight = LayerOperations.getLayerInputDims(0)[0];
+      const InputWidth = LayerOperations.getLayerInputDims(0)[1];
+
       const Retval = struct {
         layers: LayerOperations.LayerInstanceType,
         pub const Gradient = LOPS.Gradient;
@@ -969,12 +993,11 @@ pub fn mergeAny(layers: anytype) LayerType {
 
         pub fn forward(
           self: if (in_training) *@This() else *const @This(),
-          input: *[height][width]F,
+          input: *[InputHeight][InputWidth]F,
           output: *[OutputHeight][OutputWidth]F
         ) void {
           @setEvalBranchQuota(1000_000);
-          inline for (LayerOperations.Layers, 0..) |l, i| {
-            if (l.is_simple) continue;
+          inline for (0..LayerOperations.Layers.len) |i| {
             const name = std.fmt.comptimePrint("{d}", .{i});
             @field(self.layers, name).forward(input, @ptrCast(output[0][CacheSizeArray[i]..].ptr));
           }
@@ -982,9 +1005,9 @@ pub fn mergeAny(layers: anytype) LayerType {
 
         pub fn backward(
           self: *@This(),
-          cache_in: *const [height][width]F,
+          cache_in: *const [InputHeight][InputWidth]F,
           cache_out: *const [OutputHeight][OutputWidth]F,
-          d_prev: *[height][width]F,
+          d_prev: *[InputHeight][InputWidth]F,
           d_next: *const [OutputHeight][OutputWidth]F,
           gradient: *Gradient,
           comptime calc_prev: bool,
@@ -1000,9 +1023,8 @@ pub fn mergeAny(layers: anytype) LayerType {
             }
           }
 
-          var d_buf: if (calc_prev) [height][width]F else void = undefined;
+          var d_buf: if (calc_prev) [InputHeight][InputWidth]F else void = undefined;
           inline for (LayerOperations.Layers, 0..) |l, i| {
-            if (l.is_simple) continue;
             const name = std.fmt.comptimePrint("{d}", .{i});
             @field(self.layers, name).backward(
               cache_in, @ptrCast(cache_out[0][CacheSizeArray[i]..].ptr),

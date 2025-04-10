@@ -6,37 +6,31 @@ const Loss = @import("functions_loss.zig");
 const MNIST = @import("read_minst.zig");
 
 const cnn = CNN(f64, 28, 28, Loss.MeanSquaredError, [_]Layer.LayerType{
+
   // Layer.mergeAny([_]Layer.LayerType{
   //   Layer.mergeAny(.{
   //     [_]Layer.LayerType{
-  //       Layer.getConvolver(4, 4, 1, 1, Activation.getPReLU(0.2)),
   //       Layer.getConvolver(4, 4, 4, 4, Activation.getPReLU(0.05)),
   //     },
   //     [_]Layer.LayerType{
-  //       Layer.getConvolver(4, 4, 1, 1, Activation.getPReLU(0.2)),
   //       Layer.getConvolver(4, 4, 4, 4, Activation.getPReLU(0.05)),
   //     },
   //     [_]Layer.LayerType{
-  //       Layer.getConvolver(4, 4, 1, 1, Activation.getPReLU(0.2)),
   //       Layer.getConvolver(4, 4, 4, 4, Activation.getPReLU(0.05)),
   //     },
   //     [_]Layer.LayerType{
-  //       Layer.getConvolver(4, 4, 1, 1, Activation.getPReLU(0.2)),
   //       Layer.getConvolver(4, 4, 4, 4, Activation.getPReLU(0.05)),
   //     },
   //   }),
-  //   Layer.getReshaper(13, 13),
-  //   Layer.getConvolver(4, 4, 2, 2, Activation.getPReLU(0.5)),
-  //   Layer.getConvolver(4, 4, 2, 2, Activation.getPReLU(0.5)),
   // }),
 
   Layer.getFlattener(),
-  Layer.getDense(28*28, Activation.getPReLU(0.05)),
-  Layer.getDense(28*28, Activation.getPReLU(0.1)),
-  Layer.getDense(14*14, Activation.getPReLU(0.1)),
-  Layer.getDense(14*14, Activation.getPReLU(0.1)),
-  Layer.getDense(7*7, Activation.getPReLU(0.1)),
-  Layer.getDense(7*7, Activation.getPReLU(0.05)),
+  Layer.getDense(28*28, Activation.getPReLU(0.125)),
+  Layer.getDense(28*28, Activation.getPReLU(0.125)),
+  Layer.getDense(14*14, Activation.getPReLU(0.125)),
+  Layer.getDense(14*14, Activation.getPReLU(0.125)),
+  Layer.getDense(7*7, Activation.getPReLU(0.125)),
+  Layer.getDense(7*7, Activation.getPReLU(0.125)),
   Layer.getDense(10, Activation.NormalizeSquared),
 });
 
@@ -58,8 +52,8 @@ pub fn main() !void {
   for (0..4) |i| {
     trainer.train(mnist_iterator.randomIterator(rng.random(), mnist_iterator.count*2), .{
       .verbose = true,
-      .batch_size = @intCast(i + 32),
-      .learning_rate = @as(f64, 1.6) / @as(f64, @floatFromInt(1 + i)),
+      .batch_size = @intCast(i + 16),
+      .learning_rate = @as(f64, 0.001) / @as(f64, @floatFromInt(1 + i)),
     });
   }
 
@@ -68,7 +62,7 @@ pub fn main() !void {
   const mnist_test_iterator = try MNISTIterator.init("./datasets/t10k-images.idx3-ubyte", "./datasets/t10k-labels.idx1-ubyte", allocator);
   defer mnist_test_iterator.free(allocator);
 
-  const accuracy = tester.@"test"(mnist_test_iterator);
+  const accuracy = tester.@"test"(mnist_test_iterator, true);
   std.debug.print("\n>>Final Accuracy: {d:.3}%\n", .{accuracy*100});
 }
 

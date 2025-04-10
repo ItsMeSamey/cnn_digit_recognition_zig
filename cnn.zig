@@ -22,6 +22,14 @@ pub fn CNN(
 
     pub const Gradient = mergedTrainer.layer.Gradient;
 
+    fn getMaximalIndex(elements: anytype) usize {
+      var max_index: usize = 0;
+      inline for (0..elements.len) |i| {
+        if (elements[i] > elements[max_index]) max_index = i;
+      }
+      return max_index;
+    }
+
     pub const Trainer = struct {
       layer: mergedTrainer.layer,
 
@@ -32,7 +40,7 @@ pub fn CNN(
       // Sets the value in cache
       pub inline fn forward(self: *@This(), input: *[height][width]F, output: *[1][OutputWidth]F) void {
         @import("read_minst.zig").printImage(input);
-        self.layer.forward(input, output);
+        self.layer.forward(@ptrCast(input), @ptrCast(output));
       }
 
       pub fn backward(self: *@This(), input: *[height][width]F, output: *[1][OutputWidth]F, target: u8, gradient: *Gradient) void {
@@ -41,7 +49,7 @@ pub fn CNN(
         logger.log(&@src(), "predictions: {d}\n", .{&output[0]});
         logger.log(&@src(), "--- dLoss ({d}) ---\n\t{any}\n", .{target, &d_buf});
 
-        self.layer.backward(input, output, undefined, &d_buf, gradient, false);
+        self.layer.backward(@ptrCast(input), @ptrCast(output), undefined, @ptrCast(&d_buf), gradient, false);
       }
 
       pub fn reset(self: *@This(), rng: std.Random) void {
@@ -83,13 +91,9 @@ pub fn CNN(
             const loss = LossFn.forward(&output_buf[0], next.label);
             gross_loss += loss;
             if (options.verbose) {
-              logger.writer.print("{d:4}-{d:2} Loss({d}) = {d:.3}\n", .{step, n, next.label, loss*100}) catch {};
+              logger.writer.print("{d:4}-{d:2} Loss({d} -> {d}) = {d:.3}\n", .{step, n, next.label, getMaximalIndex(output_buf[0]), loss*100, }) catch {};
               // logger.log(&@src(), "Gradients {any}\n", .{gradients});
             }
-          }
-
-          if (!options.verbose) {
-            logger.writer.print("Step: {d:4}-(1-{d:2}) Loss: {d:.3}\n", .{step, n, gross_loss*100}) catch {};
           }
 
           self.layer.applyGradient(&gradients, options.learning_rate / @as(F, @floatFromInt(options.batch_size)));
@@ -108,10 +112,10 @@ pub fn CNN(
       }
 
       pub fn forward(self: *const @This(), input: *[height][width]F, output: *[1][OutputWidth]F) void {
-        self.layer.forward(input, output);
+        self.layer.forward(@ptrCast(input), @ptrCast(output));
       }
 
-      pub fn @"test"(self: *const @This(), iterator_ro: anytype) F {
+      pub fn @"test"(self: *const @This(), iterator_ro: anytype, comptime verbose: bool) F {
         defer logger.buffered.flush() catch {};
         var retval: usize = 0;
         var n: usize = 0;
@@ -128,13 +132,12 @@ pub fn CNN(
           }
           self.forward(&input_buf, &output_buf);
 
-          var guess: usize = 0;
-          inline for (0..OutputWidth) |i| {
-            if (output_buf[0][guess] < output_buf[0][i]) guess = i;
-          }
+          const guess = getMaximalIndex(output_buf[0]);
           if (guess == next.label) retval += 1;
 
-          logger.writer.print("{d:5} Prediction({d}) = {d}\n", .{n, next.label, guess}) catch {};
+          if (verbose) {
+            logger.writer.print("{d:5} Prediction({d}) = {d}\n", .{n, next.label, guess}) catch {};
+          }
         }
 
         return @as(F, @floatFromInt(retval)) / @as(F, @floatFromInt(n));
@@ -143,7 +146,7 @@ pub fn CNN(
   };
 }
 
-test "CNN Deepnet" {
+fn testDeepnet(rinit: comptime_int) !void {
   const Layer = @import("layers.zig");
   const Activation = @import("functions_activate.zig");
   const Loss = @import("functions_loss.zig");
@@ -184,27 +187,31 @@ test "CNN Deepnet" {
 
   // xor test
   const cnn = CNN(f64, 1, 3, Loss.MeanSquaredError, [_]Layer.LayerType{
-    Layer.getDense(9, Activation.getPReLU(0.1)),
-    Layer.getDense(9, Activation.getPReLU(0.1)),
+    Layer.getDense(6, Activation.getPReLU(0.1)),
     Layer.getDense(6, Activation.getPReLU(0.1)),
     Layer.getDense(3, Activation.NormalizeSquared),
   });
 
   var trainer: cnn.Trainer = undefined;
 
-  var rng = std.Random.DefaultPrng.init(0);
+  var rng = std.Random.DefaultPrng.init(rinit);
   trainer.reset(rng.random());
 
   for (0..16) |i| {
     trainer.train(Iterator{.rng = rng.random(), .remaining = 1024, .repetitions = 0}, .{
-      .verbose = true,
-      .batch_size = @intCast(16),
+      .verbose = false,
+      .batch_size = @intCast(8),
       .learning_rate = @as(f64, 1.4) / @as(f64, @floatFromInt(1 + i)),
     });
   }
 
   var tester = trainer.toTester();
-  const accuracy = tester.@"test"(Iterator{.rng = rng.random(), .remaining = 512, .repetitions = 0});
-  std.debug.print("\n>> Final Accuracy: {d:.3}%\n", .{accuracy*100});
+  const accuracy = tester.@"test"(Iterator{.rng = rng.random(), .remaining = 512, .repetitions = 0}, false);
+  std.debug.print("\n>>{d} Final Accuracy: {d:.3}%\n", .{rinit, accuracy*100});
+}
+
+test "CNN Deepnet" {
+  // inline for (0..64) |i| { try testDeepnet(i); }
+  try testDeepnet(6);
 }
 
