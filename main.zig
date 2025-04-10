@@ -54,7 +54,7 @@ pub fn main() !void {
     trainer.train(mnist_iterator.randomIterator(rng.random(), @intCast(mnist_iterator.count*(i+1))), .{
       .verbose = true,
       .batch_size = @intCast(mnist_iterator.count/(10*(i+1)*(i+1))),
-      .learning_rate = 100 / @exp(@as(f64, @floatFromInt(i+1))),
+      .learning_rate = 101.1 / @exp(@as(f64, @floatFromInt(i+1))),
     });
   }
   // inline for (0..2) |i| {
@@ -71,6 +71,6 @@ pub fn main() !void {
   defer mnist_test_iterator.free(allocator);
 
   const accuracy = tester.@"test"(mnist_test_iterator, true);
-  std.debug.print("\n>>Final Accuracy(testerr): {d:.3}%\n", .{accuracy*100});
+  std.debug.print("\n>>Final Accuracy: {d:.3}%\n", .{accuracy*100});
 }
 
