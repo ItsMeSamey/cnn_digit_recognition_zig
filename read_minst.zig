@@ -23,10 +23,10 @@ pub fn GetMinstIterator(comptime ROWS: u32, comptime COLS: u32) type {
       EndOfStream,
     };
       
-    pub fn init(images: []const u8, labels: []const u8, allocator: std.mem.Allocator) InitError!@This() {
-      var images_file = try std.fs.cwd().openFile(images, .{});
+    pub fn init(images: [:0]const u8, labels: [:0]const u8, allocator: std.mem.Allocator) InitError!@This() {
+      var images_file = try std.fs.cwd().openFileZ(images, .{});
       defer images_file.close();
-      var labels_file = try std.fs.cwd().openFile(labels, .{});
+      var labels_file = try std.fs.cwd().openFileZ(labels, .{});
       defer labels_file.close();
 
       const images_stats = try images_file.stat();
