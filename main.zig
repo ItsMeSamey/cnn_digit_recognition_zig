@@ -42,27 +42,32 @@ pub fn main() !void {
   var gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
   defer if (gpa.deinit() != .ok) @panic("Memory leak detected!!");
   const allocator = gpa.allocator();
-  var rng = std.Random.DefaultPrng.init(0);
 
+  var rng = std.Random.DefaultPrng.init(1);
   var trainer: cnn.Trainer = undefined;
+  trainer.reset(rng.random());
+
   var mnist_iterator = try MNISTIterator.init("./datasets/train-images.idx3-ubyte", "./datasets/train-labels.idx1-ubyte", allocator);
   defer mnist_iterator.free(allocator);
-
-  trainer.reset(rng.random());
-  for (0..4) |i| {
-    trainer.train(mnist_iterator.randomIterator(rng.random(), mnist_iterator.count*2), .{
+  inline for (0..4) |i| {
+    trainer.train(mnist_iterator.randomIterator(rng.random(), mnist_iterator.count), .{
       .verbose = true,
-      .batch_size = @intCast(i + 16),
-      .learning_rate = @as(f64, 0.001) / @as(f64, @floatFromInt(1 + i)),
+      .batch_size = @intCast((i+1) * 16),
+      .learning_rate = @as(f64, 0.1) * @as(f64, @floatFromInt((1+i)*(1+i))),
     });
   }
 
   var tester = trainer.toTester();
 
-  const mnist_test_iterator = try MNISTIterator.init("./datasets/t10k-images.idx3-ubyte", "./datasets/t10k-labels.idx1-ubyte", allocator);
-  defer mnist_test_iterator.free(allocator);
+  var mnist_test_iterator = try MNISTIterator.init("./datasets/t10k-images.idx3-ubyte", "./datasets/t10k-labels.idx1-ubyte", allocator);
+  const actual_count = mnist_test_iterator.count;
+  mnist_test_iterator.count = 64;
+  defer {
+    mnist_test_iterator.count = actual_count;
+    mnist_test_iterator.free(allocator);
+  }
 
   const accuracy = tester.@"test"(mnist_test_iterator, true);
-  std.debug.print("\n>>Final Accuracy: {d:.3}%\n", .{accuracy*100});
+  std.debug.print("\n>>Final Accuracy(testerr): {d:.3}%\n", .{accuracy*100});
 }
 
