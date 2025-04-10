@@ -31,7 +31,7 @@ const cnn = CNN(f64, 28, 28, Loss.MeanSquaredError, [_]Layer.LayerType{
   // Layer.getDense(28*28, Activation.getPReLU(0.5)),
   // Layer.getDense(28*28, Activation.getPReLU(0.125)),
   // Layer.getDense(14*14, Activation.getPReLU(0.125)),
-  // Layer.getDense(14*14, Activation.getPReLU(0.125)),
+  Layer.getDense(14*14, Activation.getPReLU(0.125)),
   Layer.getDense(7*7, Activation.getPReLU(0.125)),
   Layer.getDense(7*7, Activation.getPReLU(0.125)),
   Layer.getDense(10, Activation.NormalizeSquared),
@@ -50,6 +50,8 @@ fn getTester(allocator: std.mem.Allocator) !cnn.Tester {
       return try cnn.Tester.load();
     }
   }
+  logger.writer.print("Training Started ...\n", .{}) catch {};
+  logger.buffered.flush() catch {};
 
   var trainer: cnn.Trainer = undefined;
   trainer.reset(rng.random());
@@ -57,11 +59,11 @@ fn getTester(allocator: std.mem.Allocator) !cnn.Tester {
   var mnist_iterator = try MNISTIterator.init("./datasets/train-images.idx3-ubyte", "./datasets/train-labels.idx1-ubyte", allocator);
   defer mnist_iterator.free(allocator);
 
-  inline for (0..7) |i| {
+  inline for (0..6) |i| {
     trainer.train(mnist_iterator.randomIterator(rng.random(), @intCast(mnist_iterator.count*(i+1))), .{
       .batch_size = @intCast(mnist_iterator.count/(10*(i+1)*(i+1))),
-      .learning_rate = 100 / @exp(@as(f64, @floatFromInt(i+1))),
-    }, true);
+      .learning_rate = 101 / @exp(@as(f64, @floatFromInt(i+1))),
+    }, false);
   }
 
   const tester = trainer.toTester();
